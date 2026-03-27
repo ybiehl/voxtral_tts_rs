@@ -22,6 +22,9 @@ fn setup_libtorch_rpath() {
     // Always embed a relative RPATH so deployed binaries work without LD_LIBRARY_PATH
     #[cfg(target_os = "linux")]
     {
+        // Flat layout: binary and libtorch/ in the same directory (release zip)
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/libtorch/lib");
+        // Nested layout: binary in bin/ subdirectory
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../libtorch/lib");
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
     }

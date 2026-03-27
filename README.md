@@ -1,159 +1,129 @@
 # Voxtral TTS Rust
 
-Rust port of [Voxtral-4B-TTS-2603](https://huggingface.co/mistralai/Voxtral-4B-TTS-2603) -- Mistral AI's 4B-parameter text-to-speech model. Runs on macOS (Apple Silicon via MLX) and Linux (CUDA via libtorch). No Python required.
-
-## Features
-
-- **Dual backend**: libtorch (Linux/CUDA) and MLX (macOS/Metal)
-- **CLI tool**: Generate speech from text with 20 preset voices
-- **API server**: OpenAI-compatible `/v1/audio/speech` endpoint (Axum)
-- **Pure Rust inference**: Tekken BPE tokenizer, safetensors loader, full pipeline
-- **No Python**: Model downloaded with curl, weights loaded via `safetensors` crate
-
-## Prerequisites
-
-| Platform | Requirements |
-|----------|-------------|
-| macOS (Apple Silicon) | Xcode Command Line Tools, CMake, Rust 1.75+ |
-| Linux (CPU) | GCC/Clang, Rust 1.75+ |
-| Linux (CUDA) | NVIDIA driver 535+, CUDA 12.8, Rust 1.75+ |
-
-Disk: ~10GB for model weights + ~2GB for libtorch (Linux only).
+Rust port of [Voxtral-4B-TTS](https://huggingface.co/mistralai/Voxtral-4B-TTS-2603) — Mistral AI's 4B-parameter text-to-speech model. Runs on macOS (Apple Silicon via MLX) and Linux (CPU or CUDA via libtorch). No Python required.
 
 ## Quick Start
 
-### 1. Clone the repository
+### 1. Download the model
 
 ```bash
-git clone https://github.com/example/voxtral_tts_rs.git
-cd voxtral_tts_rs
+mkdir -p models/voxtral-4b-tts/voice_embedding
+BASE_URL="https://huggingface.co/mistralai/Voxtral-4B-TTS-2603/resolve/main"
+
+# Model weights (8 GB), config, and tokenizer
+curl -L -o models/voxtral-4b-tts/consolidated.safetensors "${BASE_URL}/consolidated.safetensors"
+curl -L -o models/voxtral-4b-tts/params.json "${BASE_URL}/params.json"
+curl -L -o models/voxtral-4b-tts/tekken.json "${BASE_URL}/tekken.json"
 ```
 
-### 2. Download the model (curl only, no Python)
+Or use the download script:
 
 ```bash
+git clone https://github.com/second-state/voxtral_tts_rs.git && cd voxtral_tts_rs
 bash scripts/download_model.sh
 ```
 
-This downloads to `models/voxtral-4b-tts/`:
+### 2. Download the release
 
-| File | Size | Description |
-|------|------|-------------|
-| `consolidated.safetensors` | 8 GB | Model weights (BF16) |
-| `params.json` | 4 KB | Model configuration |
-| `tekken.json` | 15 MB | Tokenizer vocabulary |
-| `voice_embedding/*.pt` | ~50 MB | 20 preset voice embeddings |
+Download the platform-specific zip from [GitHub Releases](https://github.com/second-state/voxtral_tts_rs/releases):
 
-### 3. Build
-
-**macOS (MLX backend -- recommended for Apple Silicon):**
+| Platform | Asset |
+|----------|-------|
+| macOS (Apple Silicon) | `voxtral-tts-macos-aarch64.zip` |
+| Linux x86_64 (CPU) | `voxtral-tts-linux-x86_64.zip` |
+| Linux x86_64 (CUDA) | `voxtral-tts-linux-x86_64-cuda.zip` |
+| Linux ARM64 (CPU) | `voxtral-tts-linux-aarch64.zip` |
+| Linux ARM64 (CUDA) | `voxtral-tts-linux-aarch64-cuda.zip` |
 
 ```bash
-git submodule update --init --recursive
-cargo build --release --no-default-features --features mlx
+# Example: macOS Apple Silicon
+curl -LO https://github.com/second-state/voxtral_tts_rs/releases/latest/download/voxtral-tts-macos-aarch64.zip
+unzip voxtral-tts-macos-aarch64.zip
 ```
 
-**Linux (libtorch backend):**
+### 3. Copy voice embeddings to the model folder
+
+The release zip includes pre-converted voice embeddings (`.safetensors`). Copy them into the model directory:
 
 ```bash
-# Download libtorch (pick one)
-bash scripts/download_libtorch.sh cpu      # CPU only
-bash scripts/download_libtorch.sh cu128    # CUDA 12.8
-
-# Set environment
-export LIBTORCH=$(pwd)/libtorch
-export LIBTORCH_BYPASS_VERSION_CHECK=1
-export LD_LIBRARY_PATH=${LIBTORCH}/lib:${LD_LIBRARY_PATH}
-
-cargo build --release
+cp voxtral-tts-macos-aarch64/voice_embedding/*.safetensors models/voxtral-4b-tts/voice_embedding/
 ```
 
-### 4. Convert voice embeddings (MLX only)
-
-The voice embeddings ship as PyTorch `.pt` files. The MLX backend needs `.safetensors` format. Convert them once:
+### 4. Generate speech (CLI)
 
 ```bash
-pip install torch safetensors   # one-time dependency
-python3 -c "
-import torch, os
-from safetensors.torch import save_file
-d = 'models/voxtral-4b-tts/voice_embedding'
-for f in os.listdir(d):
-    if f.endswith('.pt'):
-        t = torch.load(os.path.join(d, f), map_location='cpu', weights_only=True)
-        save_file({'embedding': t}, os.path.join(d, f.replace('.pt', '.safetensors')))
-        print(f'Converted {f}')
-"
-```
-
-## Usage
-
-### CLI
-
-```bash
-# Generate speech with a preset voice
-./target/release/voxtral-tts models/voxtral-4b-tts \
+./voxtral-tts-macos-aarch64/voxtral-tts models/voxtral-4b-tts \
     --text "Hello, this is Voxtral TTS!" \
     --voice neutral_female \
     --output output.wav
-
-# Use a different voice
-./target/release/voxtral-tts models/voxtral-4b-tts \
-    --text "Bonjour le monde!" \
-    --voice fr_female \
-    --output bonjour.wav
-
-# List all available voices
-./target/release/voxtral-tts models/voxtral-4b-tts --list-voices --text ""
 ```
 
-**CLI options:**
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--text` | (required) | Text to synthesize |
-| `--voice` | `neutral_female` | Voice name or OpenAI alias |
-| `--output` | `output.wav` | Output WAV file path |
-| `--temperature` | `0.7` | Sampling temperature |
-| `--max-tokens` | `4096` | Maximum generation tokens |
-| `--list-voices` | | Print available voices and exit |
-
-### API Server
+### 5. Start the API server
 
 ```bash
-./target/release/voxtral-tts-server models/voxtral-4b-tts --port 8080
+./voxtral-tts-macos-aarch64/voxtral-tts-server models/voxtral-4b-tts --port 8080
 ```
-
-**Generate speech (OpenAI-compatible):**
 
 ```bash
 curl -X POST http://localhost:8080/v1/audio/speech \
     -H "Content-Type: application/json" \
-    -d '{"input":"Hello world","voice":"alloy","model":"voxtral-4b-tts"}' \
+    -d '{"input":"Hello world","voice":"alloy"}' \
     -o output.wav
 ```
 
-**List models:**
+## CLI Reference
 
-```bash
-curl http://localhost:8080/v1/models
+```
+voxtral-tts <MODEL_DIR> --text "..." [OPTIONS]
 ```
 
-**Health check:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `<MODEL_DIR>` | (required) | Path to model directory |
+| `--text`, `-t` | (required) | Text to synthesize |
+| `--voice`, `-v` | `neutral_female` | Voice name or OpenAI alias |
+| `--output`, `-o` | `output.wav` | Output WAV file path |
+| `--temperature` | `0.7` | Sampling temperature (higher = more variation) |
+| `--max-tokens` | `4096` | Maximum generation tokens |
+| `--reference-audio` | | Voice reference audio file (for voice cloning) |
+| `--list-voices` | | Print available voices and exit |
+
+Examples:
 
 ```bash
-curl http://localhost:8080/health
+# English with a casual voice
+./voxtral-tts models/voxtral-4b-tts --text "Hey, what's up?" --voice casual_male -o casual.wav
+
+# French
+./voxtral-tts models/voxtral-4b-tts --text "Bonjour le monde!" --voice fr_female -o bonjour.wav
+
+# List all voices
+./voxtral-tts models/voxtral-4b-tts --list-voices --text ""
 ```
 
-### API Endpoints
+## API Server Reference
+
+```
+voxtral-tts-server <MODEL_DIR> [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `<MODEL_DIR>` | (required) | Path to model directory |
+| `--host` | `127.0.0.1` | Bind host address |
+| `--port` | `8080` | Bind port |
+
+### Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Returns `{"status":"ok"}` |
+| `/health` | GET | Health check — returns `{"status":"ok"}` |
 | `/v1/models` | GET | List available models |
-| `/v1/audio/speech` | POST | Generate speech |
+| `/v1/audio/speech` | POST | Generate speech (OpenAI-compatible) |
 
-**POST /v1/audio/speech** request body:
+### POST /v1/audio/speech
+
+Request body:
 
 ```json
 {
@@ -164,6 +134,40 @@ curl http://localhost:8080/health
     "speed": 1.0,
     "stream": false
 }
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `input` | string | (required) | Text to synthesize (max 4096 chars) |
+| `model` | string | `voxtral-4b-tts` | Model name |
+| `voice` | string | `alloy` | Voice name or OpenAI alias |
+| `response_format` | string | `wav` | Output format: `wav` or `pcm` |
+| `speed` | float | `1.0` | Speed multiplier (0.25–4.0, reserved) |
+| `stream` | bool | `false` | Enable SSE streaming |
+
+**Non-streaming** returns binary audio (`audio/wav` or `audio/pcm`).
+
+**Streaming** (`"stream": true`) returns Server-Sent Events with base64 PCM chunks:
+
+```
+data: {"type":"speech.audio.delta","delta":"<base64 16-bit LE PCM>"}
+data: {"type":"speech.audio.delta","delta":"<base64 16-bit LE PCM>"}
+data: {"type":"speech.audio.done"}
+```
+
+Examples:
+
+```bash
+# Non-streaming WAV
+curl -X POST http://localhost:8080/v1/audio/speech \
+    -H "Content-Type: application/json" \
+    -d '{"input":"Hello world","voice":"alloy"}' \
+    -o output.wav
+
+# Streaming
+curl -N -X POST http://localhost:8080/v1/audio/speech \
+    -H "Content-Type: application/json" \
+    -d '{"input":"Hello world","voice":"alloy","stream":true}'
 ```
 
 ## Voices
@@ -195,16 +199,66 @@ curl http://localhost:8080/health
 | `nova` | `casual_female` |
 | `shimmer` | `fr_female` |
 
-## Environment Variables
+## Build from Source
 
-| Variable | Description |
+### Prerequisites
+
+| Platform | Requirements |
 |----------|-------------|
-| `RUST_LOG` | Log verbosity: `error`, `warn`, `info` (default), `debug`, `trace` |
-| `LIBTORCH` | Path to libtorch directory (Linux/tch backend only) |
-| `LIBTORCH_BYPASS_VERSION_CHECK` | Set to `1` to skip libtorch version check |
-| `LD_LIBRARY_PATH` | Include `$LIBTORCH/lib` (Linux only) |
+| macOS (Apple Silicon) | Xcode Command Line Tools, CMake, Rust 1.75+ |
+| Linux (CPU) | GCC/Clang, Rust 1.75+ |
+| Linux (CUDA) | NVIDIA driver 535+, CUDA toolkit, Rust 1.75+ |
 
-## Architecture Overview
+### macOS (MLX backend)
+
+```bash
+git clone https://github.com/second-state/voxtral_tts_rs.git
+cd voxtral_tts_rs
+git submodule update --init --recursive
+cargo build --release --no-default-features --features mlx
+```
+
+### Linux (libtorch backend)
+
+```bash
+git clone https://github.com/second-state/voxtral_tts_rs.git
+cd voxtral_tts_rs
+
+# Download libtorch (pick one)
+bash scripts/download_libtorch.sh cpu      # CPU only
+bash scripts/download_libtorch.sh cu128    # CUDA 12.8
+
+# Build
+export LIBTORCH=$(pwd)/libtorch
+export LIBTORCH_BYPASS_VERSION_CHECK=1
+cargo build --release
+```
+
+### Convert voice embeddings
+
+The model ships voice embeddings as PyTorch `.pt` files. Convert them to `.safetensors` (required for MLX, optional for libtorch):
+
+```bash
+pip install torch safetensors
+python3 -c "
+import torch, os
+from safetensors.torch import save_file
+d = 'models/voxtral-4b-tts/voice_embedding'
+for f in os.listdir(d):
+    if f.endswith('.pt'):
+        t = torch.load(os.path.join(d, f), map_location='cpu', weights_only=True)
+        save_file({'embedding': t}, os.path.join(d, f.replace('.pt', '.safetensors')))
+        print(f'Converted {f}')
+"
+```
+
+### Run tests
+
+```bash
+cargo test
+```
+
+## Architecture
 
 The model has three components totalling 4B parameters:
 
@@ -227,47 +281,13 @@ Voice Embedding ──> Backbone Decoder (3.4B, 26 layers) ──> Hidden States
 | Flow-Matching Transformer | 390M | 3-layer bidirectional transformer, Euler ODE (7 steps), CFG |
 | Voxtral Codec Decoder | 300M | 4 conv+transformer blocks, strides [1,2,2,2], 240-channel output |
 
-## Project Structure
+## Environment Variables
 
-```
-src/
-├── lib.rs              # Library root, feature gates, constants
-├── tensor.rs           # Unified tensor abstraction (tch / MLX)
-├── config.rs           # params.json config parsing
-├── tokenizer.rs        # Pure Rust Tekken BPE tokenizer
-├── audio.rs            # WAV I/O, resampling, PCM encoding
-├── voice.rs            # Voice embedding loading
-├── inference.rs        # High-level TTS pipeline
-├── error.rs            # Error types
-├── model/
-│   ├── layers.rs       # RMSNorm, Linear, GQA Attention, SwiGLU MLP, RoPE
-│   ├── backbone.rs     # 26-layer Mistral decoder (3.4B)
-│   ├── flow_matching.rs # Flow-matching acoustic transformer (390M)
-│   ├── codec.rs        # Voxtral neural audio codec decoder (300M)
-│   ├── kv_cache.rs     # KV cache for autoregressive generation
-│   ├── sampling.rs     # Top-k, top-p, temperature sampling
-│   └── weights.rs      # Safetensors weight loading and partitioning
-├── backend/
-│   └── mlx/            # Apple MLX C FFI bindings
-│       ├── ffi.rs      # Raw C function declarations
-│       ├── array.rs    # MlxArray RAII wrapper
-│       ├── ops.rs      # Safe operation wrappers
-│       ├── stream.rs   # Device/stream initialization
-│       ├── io.rs       # Safetensors loading
-│       └── signal.rs   # Conv/STFT operations
-├── bin/
-│   ├── tts.rs          # CLI binary
-│   └── tts_server/     # Axum API server
-│       ├── main.rs
-│       ├── state.rs
-│       └── routes/
-│           ├── health.rs
-│           ├── models.rs
-│           └── speech.rs
-scripts/
-├── download_model.sh       # curl-only model download
-└── download_libtorch.sh    # curl-only libtorch download
-```
+| Variable | Description |
+|----------|-------------|
+| `RUST_LOG` | Log verbosity: `error`, `warn`, `info` (default), `debug`, `trace` |
+| `LIBTORCH` | Path to libtorch directory (Linux/tch backend only) |
+| `LIBTORCH_BYPASS_VERSION_CHECK` | Set to `1` to skip libtorch version check |
 
 ## License
 

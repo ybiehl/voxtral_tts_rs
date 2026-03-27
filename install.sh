@@ -155,20 +155,28 @@ download_model() {
     curl -fSL -o "${model_dir}/params.json" "${hf_url}/params.json"
     curl -fSL -o "${model_dir}/tekken.json" "${hf_url}/tekken.json"
 
-    info "Downloading voice embeddings (20 voices)..."
-    for v in casual_female casual_male cheerful_female neutral_female neutral_male \
-             pt_male pt_female nl_male nl_female it_male it_female \
-             fr_male fr_female es_male es_female de_male de_female \
-             ar_male hi_male hi_female; do
-        curl -fSL -o "${model_dir}/voice_embedding/${v}.pt" \
-            "${hf_url}/voice_embedding/${v}.pt"
-    done
-
     ok "Model downloaded to ${model_dir}/"
 }
 
 # ---------------------------------------------------------------------------
-# 6. Done — print sample commands
+# 6. Copy bundled voice embeddings to model directory
+# ---------------------------------------------------------------------------
+copy_voice_embeddings() {
+    local model_dir="${INSTALL_DIR}/models/voxtral-4b-tts"
+    local voice_src="${INSTALL_DIR}/voice_embedding"
+
+    if [ -d "$voice_src" ] && ls "${voice_src}"/*.safetensors &>/dev/null; then
+        mkdir -p "${model_dir}/voice_embedding"
+        cp "${voice_src}"/*.safetensors "${model_dir}/voice_embedding/"
+        ok "Voice embeddings copied to ${model_dir}/voice_embedding/"
+    else
+        warn "No bundled voice embeddings found. You may need to convert them manually."
+        warn "See: https://github.com/${REPO}#convert-voice-embeddings"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 7. Done — print sample commands
 # ---------------------------------------------------------------------------
 print_usage() {
     echo ""
@@ -218,6 +226,7 @@ main() {
     download_release
     download_cuda_libtorch
     download_model
+    copy_voice_embeddings
     print_usage
 }
 

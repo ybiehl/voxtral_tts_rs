@@ -1,8 +1,12 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -14,23 +18,22 @@ jobs:
             name: Linux x86_64
             backend: tch
             asset-name: voxtral-tts-linux-x86_64
-            libtorch-url: https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.1%2Bcpu.zip
-            libtorch-archive: libtorch.zip
-            bundle-libtorch: true
+            libtorch-url: https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-x86_64-2.7.1.tar.gz
           - os: ubuntu-latest
             name: Linux x86_64 (CUDA)
             backend: tch
             asset-name: voxtral-tts-linux-x86_64-cuda
-            libtorch-url: https://download.pytorch.org/libtorch/cu128/libtorch-cxx11-abi-shared-with-deps-2.7.1%2Bcu128.zip
-            libtorch-archive: libtorch.zip
-            bundle-libtorch: false
+            libtorch-url: https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-x86_64-cuda12.6-2.7.1.tar.gz
           - os: ubuntu-24.04-arm
             name: Linux ARM64
             backend: tch
             asset-name: voxtral-tts-linux-aarch64
             libtorch-url: https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz
-            libtorch-archive: libtorch.tar.gz
-            bundle-libtorch: true
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64 (CUDA)
+            backend: tch
+            asset-name: voxtral-tts-linux-aarch64-cuda
+            libtorch-url: https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-cuda12.6-2.7.1.tar.gz
           - os: macos-latest
             name: macOS ARM64
             backend: mlx
@@ -38,9 +41,6 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.name }})
-
-    permissions:
-      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -57,22 +57,26 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.backend }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
       - name: Download libtorch
         if: matrix.backend == 'tch'
-        run: curl -Lo ${{ matrix.libtorch-archive }} "${{ matrix.libtorch-url }}"
+        run: curl -Lo libtorch.tar.gz "${{ matrix.libtorch-url }}"
 
       - name: Extract libtorch
         if: matrix.backend == 'tch'
-        run: |
-          if [[ "${{ matrix.libtorch-archive }}" == *.zip ]]; then
-            unzip -q ${{ matrix.libtorch-archive }}
-          else
-            tar xzf ${{ matrix.libtorch-archive }}
-          fi
+        run: tar xzf libtorch.tar.gz
 
-      - name: Set linker flags (Linux only)
-        if: matrix.backend == 'tch' && runner.os == 'Linux'
-        run: echo "RUSTFLAGS=-C link-arg=-Wl,-rpath-link,${{ github.workspace }}/libtorch/lib -C link-arg=-Wl,-rpath,\$ORIGIN/libtorch/lib" >> "$GITHUB_ENV"
+      - name: Set linker flags (Linux tch)
+        if: matrix.backend == 'tch'
+        run: echo "RUSTFLAGS=-C link-arg=-Wl,-rpath-link,${{ github.workspace }}/libtorch/lib" >> "$GITHUB_ENV"
 
       - name: Build (tch)
         if: matrix.backend == 'tch'
@@ -87,17 +91,96 @@ jobs:
 
       - name: Package release
         run: |
-          mkdir ${{ matrix.asset-name }}
+          mkdir -p ${{ matrix.asset-name }}
           cp target/release/voxtral-tts target/release/voxtral-tts-server ${{ matrix.asset-name }}/
+          chmod +x ${{ matrix.asset-name }}/voxtral-tts ${{ matrix.asset-name }}/voxtral-tts-server
           if [ "${{ matrix.backend }}" = "mlx" ]; then
             cp target/release/build/voxtral_tts-*/out/lib/mlx.metallib ${{ matrix.asset-name }}/ 2>/dev/null || true
           fi
-          if [ "${{ matrix.bundle-libtorch }}" = "true" ]; then
+          if [ "${{ matrix.backend }}" = "tch" ]; then
             cp -r libtorch ${{ matrix.asset-name }}/libtorch
           fi
-          zip -r ${{ matrix.asset-name }}.zip ${{ matrix.asset-name }}
 
-      - name: Upload release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "${{ matrix.asset-name }}.zip"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset-name }}
+          path: ${{ matrix.asset-name }}
+
+  convert-voices:
+    runs-on: ubuntu-latest
+    name: Convert voice embeddings
+
+    steps:
+      - name: Download voice embeddings from HuggingFace
+        run: |
+          mkdir -p voice_embedding
+          HF_URL="https://huggingface.co/mistralai/Voxtral-4B-TTS-2603/resolve/main/voice_embedding"
+          for voice in casual_female casual_male cheerful_female \
+                       neutral_female neutral_male \
+                       pt_male pt_female nl_male nl_female \
+                       it_male it_female fr_male fr_female \
+                       es_male es_female de_male de_female \
+                       ar_male hi_male hi_female; do
+            echo "Downloading ${voice}.pt..."
+            curl -fSL -o "voice_embedding/${voice}.pt" "${HF_URL}/${voice}.pt"
+          done
+          echo "Downloaded $(ls voice_embedding/*.pt | wc -l) voice files"
+
+      - name: Convert to safetensors
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install torch safetensors numpy packaging --quiet
+          .venv/bin/python3 -c "
+          import torch, os
+          from safetensors.torch import save_file
+          d = 'voice_embedding'
+          for f in sorted(os.listdir(d)):
+              if f.endswith('.pt'):
+                  t = torch.load(os.path.join(d, f), map_location='cpu', weights_only=True)
+                  save_file({'embedding': t}, os.path.join(d, f.replace('.pt', '.safetensors')))
+                  print(f'Converted {f}')
+          "
+          echo "Converted $(ls voice_embedding/*.safetensors | wc -l) voice files"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-embeddings
+          path: voice_embedding/*.safetensors
+
+  release:
+    needs: [build, convert-voices]
+    runs-on: ubuntu-latest
+    name: Create Release
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package release assets
+        run: |
+          for platform in voxtral-tts-linux-x86_64 voxtral-tts-linux-x86_64-cuda \
+                          voxtral-tts-linux-aarch64 voxtral-tts-linux-aarch64-cuda \
+                          voxtral-tts-macos-aarch64; do
+            echo "Packaging ${platform}..."
+
+            # Copy voice embeddings into the platform directory
+            mkdir -p "artifacts/${platform}/voice_embedding"
+            cp artifacts/voice-embeddings/*.safetensors "artifacts/${platform}/voice_embedding/"
+
+            # Create zip
+            cd artifacts
+            zip -r "${platform}.zip" "${platform}"
+            cd ..
+
+            echo "  $(du -sh "artifacts/${platform}.zip" | cut -f1)"
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip
+          generate_release_notes: true

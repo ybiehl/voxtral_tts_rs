@@ -22,7 +22,6 @@ jobs:
             name: Linux ARM64 (tch)
             backend: tch
             libtorch-url: https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz
-            libtorch-archive: libtorch.tar.gz
           - os: macos-latest
             name: macOS ARM64 (MLX)
             backend: mlx
@@ -49,11 +48,9 @@ jobs:
 
       - name: Download libtorch
         if: matrix.backend == 'tch'
-        run: curl -Lo ${{ matrix.libtorch-archive }} "${{ matrix.libtorch-url }}"
-
-      - name: Extract libtorch
-        if: matrix.backend == 'tch'
-        run: tar xzf ${{ matrix.libtorch-archive }}
+        run: |
+          curl -Lo libtorch.tar.gz "${{ matrix.libtorch-url }}"
+          tar xzf libtorch.tar.gz
 
       - name: Set linker rpath-link (Linux only)
         if: runner.os == 'Linux' && matrix.backend == 'tch'
