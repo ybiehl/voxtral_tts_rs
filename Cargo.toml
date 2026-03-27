@@ -1,0 +1,65 @@
+[package]
+name = "voxtral_tts"
+version = "0.1.0"
+edition = "2021"
+authors = ["Michael Yuan <michael@secondstate.io>"]
+description = "Rust port of Voxtral TTS - Text-to-Speech model"
+license = "Apache-2.0"
+keywords = ["tts", "text-to-speech", "voxtral", "mistral", "ai"]
+categories = ["multimedia::audio", "science"]
+exclude = ["models/", "*.wav", ".DS_Store"]
+
+[features]
+default = ["tch-backend"]
+# Use libtorch/PyTorch as the computation backend (default, Linux/CUDA)
+tch-backend = ["dep:tch"]
+# Use Apple MLX as the computation backend (macOS Apple Silicon only).
+# Requires the mlx-c git submodule: `git submodule update --init --recursive`
+mlx = []
+
+[dependencies]
+# PyTorch bindings via libtorch (0.20 for PyTorch 2.7.1 compatibility)
+tch = { version = "0.20", optional = true }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+safetensors = "0.5"
+
+# Audio processing
+hound = "3.5"
+rubato = "0.16"
+
+# Utilities
+base64 = "0.22"
+memmap2 = "0.9"
+half = { version = "2.7", features = ["serde"] }
+byteorder = "1.5"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Server
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+
+[build-dependencies]
+cmake = "0.1"
+
+[[bin]]
+name = "voxtral-tts"
+path = "src/bin/tts.rs"
+
+[[bin]]
+name = "voxtral-tts-server"
+path = "src/bin/tts_server/main.rs"
+
+[dev-dependencies]
+tempfile = "3.14"
