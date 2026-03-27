@@ -79,8 +79,9 @@ jobs:
 
       - name: Convert voice embeddings to safetensors
         run: |
-          pip3 install torch safetensors numpy --quiet --break-system-packages
-          python3 -c "
+          python3 -m venv .venv
+          .venv/bin/pip install torch safetensors numpy --quiet
+          .venv/bin/python3 -c "
           import torch, os
           from safetensors.torch import save_file
           d = 'models/voxtral-4b-tts/voice_embedding'
