@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x86_64 (tch)
+            backend: tch
+            libtorch-url: https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.1%2Bcpu.zip
+            libtorch-archive: libtorch.zip
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64 (tch)
+            backend: tch
+            libtorch-url: https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz
+            libtorch-archive: libtorch.tar.gz
+          - os: macos-latest
+            name: macOS ARM64 (tch)
+            backend: tch
+            libtorch-url: https://download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-2.7.1.zip
+            libtorch-archive: libtorch.zip
+          - os: macos-latest
+            name: macOS ARM64 (MLX)
+            backend: mlx
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Init MLX submodule
+        if: matrix.backend == 'mlx'
+        run: git submodule update --init --recursive
+
+      - name: Delete Cargo.lock
+        run: rm -f Cargo.lock
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download libtorch
+        if: matrix.backend == 'tch'
+        run: curl -Lo ${{ matrix.libtorch-archive }} "${{ matrix.libtorch-url }}"
+
+      - name: Extract libtorch
+        if: matrix.backend == 'tch'
+        run: |
+          if [[ "${{ matrix.libtorch-archive }}" == *.zip ]]; then
+            unzip -q ${{ matrix.libtorch-archive }}
+          else
+            tar xzf ${{ matrix.libtorch-archive }}
+          fi
+
+      - name: Set linker rpath-link (Linux only)
+        if: runner.os == 'Linux' && matrix.backend == 'tch'
+        run: echo "RUSTFLAGS=-C link-arg=-Wl,-rpath-link,${{ github.workspace }}/libtorch/lib" >> "$GITHUB_ENV"
+
+      - name: Build (tch)
+        if: matrix.backend == 'tch'
+        env:
+          LIBTORCH: ${{ github.workspace }}/libtorch
+          LIBTORCH_BYPASS_VERSION_CHECK: "1"
+        run: cargo build --release
+
+      - name: Build (MLX)
+        if: matrix.backend == 'mlx'
+        run: cargo build --release --no-default-features --features mlx
+
+      - name: Set library path (Linux)
+        if: runner.os == 'Linux' && matrix.backend == 'tch'
+        run: echo "LD_LIBRARY_PATH=${{ github.workspace }}/libtorch/lib:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+
+      - name: Set library path (macOS)
+        if: runner.os == 'macOS' && matrix.backend == 'tch'
+        run: echo "DYLD_LIBRARY_PATH=${{ github.workspace }}/libtorch/lib:$DYLD_LIBRARY_PATH" >> "$GITHUB_ENV"
+
+      - name: Download model
+        run: bash scripts/download_model.sh
+
+      - name: Generate speech (preset voice)
+        run: |
+          ./target/release/voxtral-tts models/voxtral-4b-tts \
+            --text "Hello! This is a test of the Voxtral TTS system running on CI." \
+            --voice neutral_female \
+            --output neutral_female_english.wav
+
+      - name: Generate speech (French)
+        run: |
+          ./target/release/voxtral-tts models/voxtral-4b-tts \
+            --text "Bonjour! Ceci est un test du système Voxtral TTS." \
+            --voice fr_female \
+            --output fr_female_french.wav
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: voxtral-tts-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.backend }}.zip
+          path: |
+            target/release/voxtral-tts
+            target/release/voxtral-tts-server
+            neutral_female_english.wav
+            fr_female_french.wav

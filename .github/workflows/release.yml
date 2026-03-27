@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x86_64
+            backend: tch
+            asset-name: voxtral-tts-linux-x86_64
+            libtorch-url: https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.1%2Bcpu.zip
+            libtorch-archive: libtorch.zip
+            bundle-libtorch: true
+          - os: ubuntu-latest
+            name: Linux x86_64 (CUDA)
+            backend: tch
+            asset-name: voxtral-tts-linux-x86_64-cuda
+            libtorch-url: https://download.pytorch.org/libtorch/cu128/libtorch-cxx11-abi-shared-with-deps-2.7.1%2Bcu128.zip
+            libtorch-archive: libtorch.zip
+            bundle-libtorch: false
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64
+            backend: tch
+            asset-name: voxtral-tts-linux-aarch64
+            libtorch-url: https://github.com/second-state/libtorch-releases/releases/download/v2.7.1/libtorch-cxx11-abi-aarch64-2.7.1.tar.gz
+            libtorch-archive: libtorch.tar.gz
+            bundle-libtorch: true
+          - os: macos-latest
+            name: macOS ARM64
+            backend: mlx
+            asset-name: voxtral-tts-macos-aarch64
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        if: matrix.backend == 'tch'
+
+      - uses: actions/checkout@v4
+        if: matrix.backend == 'mlx'
+        with:
+          submodules: recursive
+
+      - name: Delete Cargo.lock
+        run: rm -f Cargo.lock
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download libtorch
+        if: matrix.backend == 'tch'
+        run: curl -Lo ${{ matrix.libtorch-archive }} "${{ matrix.libtorch-url }}"
+
+      - name: Extract libtorch
+        if: matrix.backend == 'tch'
+        run: |
+          if [[ "${{ matrix.libtorch-archive }}" == *.zip ]]; then
+            unzip -q ${{ matrix.libtorch-archive }}
+          else
+            tar xzf ${{ matrix.libtorch-archive }}
+          fi
+
+      - name: Set linker flags (Linux only)
+        if: matrix.backend == 'tch' && runner.os == 'Linux'
+        run: echo "RUSTFLAGS=-C link-arg=-Wl,-rpath-link,${{ github.workspace }}/libtorch/lib -C link-arg=-Wl,-rpath,\$ORIGIN/libtorch/lib" >> "$GITHUB_ENV"
+
+      - name: Build (tch)
+        if: matrix.backend == 'tch'
+        env:
+          LIBTORCH: ${{ github.workspace }}/libtorch
+          LIBTORCH_BYPASS_VERSION_CHECK: "1"
+        run: cargo build --release
+
+      - name: Build (mlx)
+        if: matrix.backend == 'mlx'
+        run: cargo build --release --no-default-features --features mlx
+
+      - name: Package release
+        run: |
+          mkdir ${{ matrix.asset-name }}
+          cp target/release/voxtral-tts target/release/voxtral-tts-server ${{ matrix.asset-name }}/
+          if [ "${{ matrix.backend }}" = "mlx" ]; then
+            cp target/release/build/voxtral_tts-*/out/lib/mlx.metallib ${{ matrix.asset-name }}/ 2>/dev/null || true
+          fi
+          if [ "${{ matrix.bundle-libtorch }}" = "true" ]; then
+            cp -r libtorch ${{ matrix.asset-name }}/libtorch
+          fi
+          zip -r ${{ matrix.asset-name }}.zip ${{ matrix.asset-name }}
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ matrix.asset-name }}.zip"
