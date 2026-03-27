@@ -12,7 +12,7 @@ use std::path::Path;
 
 use crate::config::VoxtralConfig;
 use crate::error::{Result, VoxtralError};
-use crate::tensor::{Device, Tensor};
+use crate::tensor::{DType, Device, Tensor};
 
 use super::backbone::{Backbone, BackboneConfig};
 use super::codec::Codec;
@@ -56,13 +56,21 @@ pub fn load_model_weights(
         model_dir.display()
     );
 
+    // On CPU, libtorch cannot do BF16 matmul — cast all weights to F32.
+    let need_f32 = matches!(device, Device::Cpu);
+
     // Load all tensors into a single HashMap
     let mut all_weights: HashMap<String, Tensor> = HashMap::new();
     for path in &safetensors_files {
         tracing::debug!("Loading {}", path.display());
         let tensors = Tensor::load_safetensors(path)?;
         for (name, tensor) in tensors {
-            all_weights.insert(name, tensor.to_device(device));
+            let tensor = if need_f32 {
+                tensor.to_dtype(DType::Float32).to_device(device)
+            } else {
+                tensor.to_device(device)
+            };
+            all_weights.insert(name, tensor);
         }
     }
 
