@@ -80,7 +80,7 @@ jobs:
       - name: Convert voice embeddings to safetensors
         run: |
           python3 -m venv .venv
-          .venv/bin/pip install torch safetensors numpy --quiet
+          .venv/bin/pip install torch safetensors numpy packaging --quiet
           .venv/bin/python3 -c "
           import torch, os
           from safetensors.torch import save_file
