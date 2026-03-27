@@ -165,8 +165,14 @@ mod tests {
     use super::*;
     use crate::tensor::{DType, Device};
 
+    fn setup() {
+        #[cfg(feature = "mlx")]
+        crate::backend::mlx::stream::init_mlx(false);
+    }
+
     #[test]
     fn test_greedy_sampling() {
+        setup();
         // Create logits where index 3 has the highest value
         let data = vec![0.1f32, 0.2, 0.3, 10.0, 0.5];
         let logits = Tensor::from_slice_f32(&data);
@@ -176,6 +182,7 @@ mod tests {
 
     #[test]
     fn test_temperature_sampling() {
+        setup();
         // With high temperature, distribution is more uniform
         // With very low temperature, should approximate greedy
         let data = vec![0.1f32, 0.2, 0.3, 10.0, 0.5];
@@ -187,6 +194,7 @@ mod tests {
 
     #[test]
     fn test_top_k_filter() {
+        setup();
         let data = vec![1.0f32, 5.0, 3.0, 2.0, 4.0];
         let logits = Tensor::from_slice_f32(&data);
         let filtered = top_k_filter(&logits, 2);

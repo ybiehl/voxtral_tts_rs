@@ -502,8 +502,14 @@ impl TransformerLayer {
 mod tests {
     use super::*;
 
+    fn setup() {
+        #[cfg(feature = "mlx")]
+        crate::backend::mlx::stream::init_mlx(false);
+    }
+
     #[test]
     fn test_rms_norm_shape() {
+        setup();
         let dim = 64;
         let weight = Tensor::ones(&[dim], DType::Float32, Device::Cpu);
         let norm = RMSNorm::from_weights(weight, 1e-5);
@@ -514,6 +520,7 @@ mod tests {
 
     #[test]
     fn test_linear_shape() {
+        setup();
         let weight = Tensor::ones(&[32, 64], DType::Float32, Device::Cpu);
         let linear = Linear::from_weights(weight);
         let x = Tensor::ones(&[1, 4, 64], DType::Float32, Device::Cpu);

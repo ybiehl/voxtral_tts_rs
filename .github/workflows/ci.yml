@@ -45,6 +45,10 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install libomp (macOS)
+        if: runner.os == 'macOS' && matrix.backend == 'tch'
+        run: brew install libomp
+
       - name: Download libtorch
         if: matrix.backend == 'tch'
         run: curl -Lo ${{ matrix.libtorch-archive }} "${{ matrix.libtorch-url }}"
@@ -79,11 +83,20 @@ jobs:
           LIBTORCH: ${{ github.workspace }}/libtorch
           LIBTORCH_BYPASS_VERSION_CHECK: "1"
           LD_LIBRARY_PATH: ${{ github.workspace }}/libtorch/lib
+          DYLD_LIBRARY_PATH: ${{ github.workspace }}/libtorch/lib
         run: cargo test --release
 
       - name: Run unit tests (MLX)
         if: matrix.backend == 'mlx'
         run: cargo test --release --no-default-features --features mlx
+
+      - name: Set library path (macOS tch)
+        if: runner.os == 'macOS' && matrix.backend == 'tch'
+        run: echo "DYLD_LIBRARY_PATH=${{ github.workspace }}/libtorch/lib:$DYLD_LIBRARY_PATH" >> "$GITHUB_ENV"
+
+      - name: Set library path (Linux tch)
+        if: runner.os == 'Linux' && matrix.backend == 'tch'
+        run: echo "LD_LIBRARY_PATH=${{ github.workspace }}/libtorch/lib:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
 
       - name: Smoke test - CLI prints help
         run: ./target/release/voxtral-tts --help

@@ -87,6 +87,11 @@ mod tests {
     use super::*;
     use crate::tensor::{DType, Device};
 
+    fn setup() {
+        #[cfg(feature = "mlx")]
+        crate::backend::mlx::stream::init_mlx(false);
+    }
+
     #[test]
     fn test_kv_cache_empty() {
         let cache = KVCache::new(4);
@@ -97,6 +102,7 @@ mod tests {
 
     #[test]
     fn test_kv_cache_update_and_get() {
+        setup();
         let mut cache = KVCache::new(2);
 
         // First update: insert initial KV (from prefill)

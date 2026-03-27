@@ -1104,21 +1104,32 @@ impl Tensor {
         } else {
             dim
         } as i32;
-        // MLX topk returns the k largest values. For smallest, negate first.
-        let values = crate::backend::mlx::ops::topk(&self.inner, k as i32, dim);
+        // MLX topk returns the k largest values in ASCENDING order.
+        // PyTorch topk returns them in DESCENDING order. We must reverse.
+        let values_asc = crate::backend::mlx::ops::topk(&self.inner, k as i32, dim);
+
         // MLX topk doesn't return indices separately; use argsort to get them.
         let sorted_idx = crate::backend::mlx::ops::argsort(&self.inner, dim);
-        // Take the last k indices (largest)
+        // Take the last k indices (largest) from ascending argsort
         let n = self.inner.shape_dim(dim);
-        // For topk, we need to extract the top-k indices from argsort
-        // Take last k elements along the sorted dimension
         let ndim = self.inner.ndim() as usize;
         let mut top_starts = vec![0i32; ndim];
         let top_stops = self.inner.shape();
         let top_strides = vec![1i32; ndim];
         top_starts[dim as usize] = n - k as i32;
-        let top_indices = crate::backend::mlx::ops::slice(&sorted_idx, &top_starts, &top_stops, &top_strides);
-        (Tensor::from_mlx(values), Tensor::from_mlx(top_indices))
+        let top_indices_asc = crate::backend::mlx::ops::slice(&sorted_idx, &top_starts, &top_stops, &top_strides);
+
+        // Reverse along dim to get descending order (matching PyTorch convention)
+        // Extract to CPU, reverse, and rebuild
+        let values_vec = values_asc.to_vec_f32();
+        let indices_vec = top_indices_asc.to_vec_i32();
+        let values_rev: Vec<f32> = values_vec.into_iter().rev().collect();
+        let indices_rev: Vec<i32> = indices_vec.into_iter().rev().collect();
+        let shape = values_asc.shape();
+        let values = crate::backend::mlx::array::MlxArray::from_f32(&values_rev, &shape);
+        let indices = crate::backend::mlx::array::MlxArray::from_i32(&indices_rev, &shape);
+
+        (Tensor::from_mlx(values), Tensor::from_mlx(indices))
     }
 
     pub fn multinomial(&self, num_samples: i64, _replacement: bool) -> Self {
