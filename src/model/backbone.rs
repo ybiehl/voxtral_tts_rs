@@ -10,8 +10,7 @@
 use std::collections::HashMap;
 
 use crate::config::VoxtralConfig;
-use crate::error::{Result, VoxtralError};
-use crate::tensor::{DType, Device, Tensor};
+use crate::tensor::{Device, Tensor};
 
 use super::kv_cache::KVCache;
 use super::layers::{RMSNorm, RotaryEmbedding, TransformerLayer};
@@ -72,7 +71,7 @@ pub struct Backbone {
     norm: RMSNorm,
     /// Output projection (lm_head): `[vocab_size, dim]`.
     /// Tied with `tok_embeddings` when `tied_embeddings=true`.
-    output: Tensor,
+    _output: Tensor,
     /// Shared rotary positional embedding.
     rotary_emb: RotaryEmbedding,
     /// Model configuration.
@@ -106,7 +105,8 @@ impl Backbone {
             .to_device(device);
 
         // Build codebook offsets: semantic has 8192+2=8194 entries, each acoustic has 21+2=23
-        let semantic_cb_size = (crate::SEMANTIC_CODEBOOK_SIZE + crate::NUM_AUDIO_SPECIAL_TOKENS) as i64;
+        let semantic_cb_size =
+            (crate::SEMANTIC_CODEBOOK_SIZE + crate::NUM_AUDIO_SPECIAL_TOKENS) as i64;
         let acoustic_cb_size = (crate::FSQ_LEVELS + crate::NUM_AUDIO_SPECIAL_TOKENS) as i64;
         let mut codebook_offsets = Vec::with_capacity(crate::TOKENS_PER_FRAME);
         codebook_offsets.push(0); // semantic codebook at offset 0
@@ -155,7 +155,7 @@ impl Backbone {
             codebook_offsets,
             layers,
             norm,
-            output,
+            _output: output,
             rotary_emb,
             config,
         }
@@ -177,8 +177,7 @@ impl Backbone {
         let mut h = embeddings.clone();
 
         for (i, layer) in self.layers.iter().enumerate() {
-            let (out, new_k, new_v) =
-                layer.forward(&h, &self.rotary_emb, 0, kv_cache.get(i), true);
+            let (out, new_k, new_v) = layer.forward(&h, &self.rotary_emb, 0, kv_cache.get(i), true);
             // Force evaluation after each layer to catch errors early
             out.eval();
             new_k.eval();
@@ -205,11 +204,7 @@ impl Backbone {
     /// * `kv_cache` – KV cache (updated in place).
     ///
     /// Returns the hidden state: `[dim]`.
-    pub fn forward_one_embedding(
-        &self,
-        embedding: &Tensor,
-        kv_cache: &mut KVCache,
-    ) -> Tensor {
+    pub fn forward_one_embedding(&self, embedding: &Tensor, kv_cache: &mut KVCache) -> Tensor {
         let h = embedding.reshape(&[1, 1, self.config.dim as i64]);
         let pos = kv_cache.seq_len();
         let mut h = h;

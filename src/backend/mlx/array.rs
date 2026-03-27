@@ -50,7 +50,12 @@ impl MlxArray {
 
     pub fn from_f32(data: &[f32], shape: &[i32]) -> Self {
         let ptr = unsafe {
-            ffi::mlx_array_new_data(data.as_ptr() as *const _, shape.as_ptr(), shape.len() as i32, ffi::mlx_dtype::MLX_FLOAT32)
+            ffi::mlx_array_new_data(
+                data.as_ptr() as *const _,
+                shape.as_ptr(),
+                shape.len() as i32,
+                ffi::mlx_dtype::MLX_FLOAT32,
+            )
         };
         debug_assert!(!ptr.is_null());
         Self::from_raw(ptr)
@@ -58,7 +63,12 @@ impl MlxArray {
 
     pub fn from_i64(data: &[i64], shape: &[i32]) -> Self {
         let ptr = unsafe {
-            ffi::mlx_array_new_data(data.as_ptr() as *const _, shape.as_ptr(), shape.len() as i32, ffi::mlx_dtype::MLX_INT64)
+            ffi::mlx_array_new_data(
+                data.as_ptr() as *const _,
+                shape.as_ptr(),
+                shape.len() as i32,
+                ffi::mlx_dtype::MLX_INT64,
+            )
         };
         debug_assert!(!ptr.is_null());
         Self::from_raw(ptr)
@@ -66,7 +76,12 @@ impl MlxArray {
 
     pub fn from_i32(data: &[i32], shape: &[i32]) -> Self {
         let ptr = unsafe {
-            ffi::mlx_array_new_data(data.as_ptr() as *const _, shape.as_ptr(), shape.len() as i32, ffi::mlx_dtype::MLX_INT32)
+            ffi::mlx_array_new_data(
+                data.as_ptr() as *const _,
+                shape.as_ptr(),
+                shape.len() as i32,
+                ffi::mlx_dtype::MLX_INT32,
+            )
         };
         debug_assert!(!ptr.is_null());
         Self::from_raw(ptr)
@@ -74,7 +89,12 @@ impl MlxArray {
 
     pub fn from_bool(data: &[bool], shape: &[i32]) -> Self {
         let ptr = unsafe {
-            ffi::mlx_array_new_data(data.as_ptr() as *const _, shape.as_ptr(), shape.len() as i32, ffi::mlx_dtype::MLX_BOOL)
+            ffi::mlx_array_new_data(
+                data.as_ptr() as *const _,
+                shape.as_ptr(),
+                shape.len() as i32,
+                ffi::mlx_dtype::MLX_BOOL,
+            )
         };
         debug_assert!(!ptr.is_null());
         Self::from_raw(ptr)
@@ -94,13 +114,29 @@ impl MlxArray {
 
     pub fn zeros(shape: &[i32], dtype: ffi::mlx_dtype) -> Self {
         let mut res = Self::empty();
-        unsafe { ffi::mlx_zeros(&mut res.ptr, shape.as_ptr(), shape.len(), dtype, default_stream()) };
+        unsafe {
+            ffi::mlx_zeros(
+                &mut res.ptr,
+                shape.as_ptr(),
+                shape.len(),
+                dtype,
+                default_stream(),
+            )
+        };
         res
     }
 
     pub fn ones(shape: &[i32], dtype: ffi::mlx_dtype) -> Self {
         let mut res = Self::empty();
-        unsafe { ffi::mlx_ones(&mut res.ptr, shape.as_ptr(), shape.len(), dtype, default_stream()) };
+        unsafe {
+            ffi::mlx_ones(
+                &mut res.ptr,
+                shape.as_ptr(),
+                shape.len(),
+                dtype,
+                default_stream(),
+            )
+        };
         res
     }
 
@@ -112,7 +148,16 @@ impl MlxArray {
 
     pub fn full(shape: &[i32], val: &MlxArray, dtype: ffi::mlx_dtype) -> Self {
         let mut res = Self::empty();
-        unsafe { ffi::mlx_full(&mut res.ptr, shape.as_ptr(), shape.len(), val.ptr, dtype, default_stream()) };
+        unsafe {
+            ffi::mlx_full(
+                &mut res.ptr,
+                shape.as_ptr(),
+                shape.len(),
+                val.ptr,
+                dtype,
+                default_stream(),
+            )
+        };
         res
     }
 

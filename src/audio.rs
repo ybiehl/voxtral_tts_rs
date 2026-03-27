@@ -113,7 +113,9 @@ pub fn resample(samples: &[f32], source_sr: u32, target_sr: u32) -> Result<Vec<f
         return Ok(samples.to_vec());
     }
 
-    use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+    use rubato::{
+        Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+    };
 
     let params = SincInterpolationParameters {
         sinc_len: 256,

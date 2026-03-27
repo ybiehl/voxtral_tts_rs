@@ -76,13 +76,29 @@ pub fn matmul(a: &MlxArray, b: &MlxArray) -> MlxArray {
 
 pub fn reshape(a: &MlxArray, shape: &[i32]) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_reshape(&mut res.ptr, a.ptr, shape.as_ptr(), shape.len(), default_stream()) };
+    unsafe {
+        ffi::mlx_reshape(
+            &mut res.ptr,
+            a.ptr,
+            shape.as_ptr(),
+            shape.len(),
+            default_stream(),
+        )
+    };
     res
 }
 
 pub fn transpose(a: &MlxArray, axes: &[i32]) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_transpose_axes(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), default_stream()) };
+    unsafe {
+        ffi::mlx_transpose_axes(
+            &mut res.ptr,
+            a.ptr,
+            axes.as_ptr(),
+            axes.len(),
+            default_stream(),
+        )
+    };
     res
 }
 
@@ -104,19 +120,47 @@ pub fn expand_dims(a: &MlxArray, axes: &[i32]) -> MlxArray {
 
 pub fn squeeze(a: &MlxArray, axes: &[i32]) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_squeeze_axes(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), default_stream()) };
+    unsafe {
+        ffi::mlx_squeeze_axes(
+            &mut res.ptr,
+            a.ptr,
+            axes.as_ptr(),
+            axes.len(),
+            default_stream(),
+        )
+    };
     res
 }
 
 pub fn slice(a: &MlxArray, start: &[i32], stop: &[i32], strides: &[i32]) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_slice(&mut res.ptr, a.ptr, start.as_ptr(), start.len(), stop.as_ptr(), stop.len(), strides.as_ptr(), strides.len(), default_stream()) };
+    unsafe {
+        ffi::mlx_slice(
+            &mut res.ptr,
+            a.ptr,
+            start.as_ptr(),
+            start.len(),
+            stop.as_ptr(),
+            stop.len(),
+            strides.as_ptr(),
+            strides.len(),
+            default_stream(),
+        )
+    };
     res
 }
 
 pub fn broadcast_to(a: &MlxArray, shape: &[i32]) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_broadcast_to(&mut res.ptr, a.ptr, shape.as_ptr(), shape.len(), default_stream()) };
+    unsafe {
+        ffi::mlx_broadcast_to(
+            &mut res.ptr,
+            a.ptr,
+            shape.as_ptr(),
+            shape.len(),
+            default_stream(),
+        )
+    };
     res
 }
 
@@ -162,19 +206,47 @@ pub fn take_along_axis(a: &MlxArray, indices: &MlxArray, axis: i32) -> MlxArray 
 
 pub fn sum(a: &MlxArray, axes: &[i32], keepdims: bool) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_sum_axes(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), keepdims, default_stream()) };
+    unsafe {
+        ffi::mlx_sum_axes(
+            &mut res.ptr,
+            a.ptr,
+            axes.as_ptr(),
+            axes.len(),
+            keepdims,
+            default_stream(),
+        )
+    };
     res
 }
 
 pub fn mean(a: &MlxArray, axes: &[i32], keepdims: bool) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_mean_axes(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), keepdims, default_stream()) };
+    unsafe {
+        ffi::mlx_mean_axes(
+            &mut res.ptr,
+            a.ptr,
+            axes.as_ptr(),
+            axes.len(),
+            keepdims,
+            default_stream(),
+        )
+    };
     res
 }
 
 pub fn var(a: &MlxArray, axes: &[i32], keepdims: bool, ddof: i32) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_var_axes(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), keepdims, ddof, default_stream()) };
+    unsafe {
+        ffi::mlx_var_axes(
+            &mut res.ptr,
+            a.ptr,
+            axes.as_ptr(),
+            axes.len(),
+            keepdims,
+            ddof,
+            default_stream(),
+        )
+    };
     res
 }
 
@@ -246,7 +318,16 @@ pub fn tanh(a: &MlxArray) -> MlxArray {
 
 pub fn softmax(a: &MlxArray, axes: &[i32]) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_softmax_axes(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), true, default_stream()) };
+    unsafe {
+        ffi::mlx_softmax_axes(
+            &mut res.ptr,
+            a.ptr,
+            axes.as_ptr(),
+            axes.len(),
+            true,
+            default_stream(),
+        )
+    };
     res
 }
 
@@ -336,22 +417,79 @@ pub fn argsort(a: &MlxArray, axis: i32) -> MlxArray {
     res
 }
 
-pub fn conv1d(input: &MlxArray, weight: &MlxArray, stride: i32, padding: i32, dilation: i32, groups: i32) -> MlxArray {
+pub fn conv1d(
+    input: &MlxArray,
+    weight: &MlxArray,
+    stride: i32,
+    padding: i32,
+    dilation: i32,
+    groups: i32,
+) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_conv1d(&mut res.ptr, input.ptr, weight.ptr, stride, padding, dilation, groups, default_stream()) };
+    unsafe {
+        ffi::mlx_conv1d(
+            &mut res.ptr,
+            input.ptr,
+            weight.ptr,
+            stride,
+            padding,
+            dilation,
+            groups,
+            default_stream(),
+        )
+    };
     res
 }
 
-pub fn conv_transpose1d(input: &MlxArray, weight: &MlxArray, stride: i32, padding: i32, dilation: i32, groups: i32) -> MlxArray {
+pub fn conv_transpose1d(
+    input: &MlxArray,
+    weight: &MlxArray,
+    stride: i32,
+    padding: i32,
+    dilation: i32,
+    groups: i32,
+) -> MlxArray {
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_conv_transpose1d(&mut res.ptr, input.ptr, weight.ptr, stride, padding, dilation, 0, groups, default_stream()) };
+    unsafe {
+        ffi::mlx_conv_transpose1d(
+            &mut res.ptr,
+            input.ptr,
+            weight.ptr,
+            stride,
+            padding,
+            dilation,
+            0,
+            groups,
+            default_stream(),
+        )
+    };
     res
 }
 
-pub fn pad(a: &MlxArray, axes: &[i32], low_pad: &[i32], high_pad: &[i32], val: &MlxArray) -> MlxArray {
+pub fn pad(
+    a: &MlxArray,
+    axes: &[i32],
+    low_pad: &[i32],
+    high_pad: &[i32],
+    val: &MlxArray,
+) -> MlxArray {
     let mut res = MlxArray::empty();
-    let mode = b"constant\0".as_ptr() as *const std::os::raw::c_char;
-    unsafe { ffi::mlx_pad(&mut res.ptr, a.ptr, axes.as_ptr(), axes.len(), low_pad.as_ptr(), low_pad.len(), high_pad.as_ptr(), high_pad.len(), val.ptr, mode, default_stream()) };
+    let mode = c"constant".as_ptr();
+    unsafe {
+        ffi::mlx_pad(
+            &mut res.ptr,
+            a.ptr,
+            axes.as_ptr(),
+            axes.len(),
+            low_pad.as_ptr(),
+            low_pad.len(),
+            high_pad.as_ptr(),
+            high_pad.len(),
+            val.ptr,
+            mode,
+            default_stream(),
+        )
+    };
     res
 }
 
@@ -361,30 +499,87 @@ pub fn fast_rms_norm(x: &MlxArray, weight: &MlxArray, eps: f32) -> MlxArray {
     res
 }
 
-pub fn fast_layer_norm(x: &MlxArray, weight: &MlxArray, bias: Option<&MlxArray>, eps: f32) -> MlxArray {
+pub fn fast_layer_norm(
+    x: &MlxArray,
+    weight: &MlxArray,
+    bias: Option<&MlxArray>,
+    eps: f32,
+) -> MlxArray {
     let mut res = MlxArray::empty();
     let bias_ptr = bias.map_or(std::ptr::null_mut(), |b| b.ptr);
-    unsafe { ffi::mlx_fast_layer_norm(&mut res.ptr, x.ptr, weight.ptr, bias_ptr, eps, default_stream()) };
+    unsafe {
+        ffi::mlx_fast_layer_norm(
+            &mut res.ptr,
+            x.ptr,
+            weight.ptr,
+            bias_ptr,
+            eps,
+            default_stream(),
+        )
+    };
     res
 }
 
-pub fn fast_rope(x: &MlxArray, dims: i32, traditional: bool, base: Option<&MlxArray>, scale: f32, offset: i32) -> MlxArray {
+pub fn fast_rope(
+    x: &MlxArray,
+    dims: i32,
+    traditional: bool,
+    base: Option<&MlxArray>,
+    scale: f32,
+    offset: i32,
+) -> MlxArray {
     let mut res = MlxArray::empty();
     let opt_base = match base {
-        Some(b) => ffi::mlx_optional_float { value: b.item_f32(), has_value: true },
-        None => ffi::mlx_optional_float { value: 0.0, has_value: false },
+        Some(b) => ffi::mlx_optional_float {
+            value: b.item_f32(),
+            has_value: true,
+        },
+        None => ffi::mlx_optional_float {
+            value: 0.0,
+            has_value: false,
+        },
     };
     let freqs_ptr: ffi::mlx_array = std::ptr::null_mut();
-    unsafe { ffi::mlx_fast_rope(&mut res.ptr, x.ptr, dims, traditional, opt_base, scale, offset, freqs_ptr, default_stream()) };
+    unsafe {
+        ffi::mlx_fast_rope(
+            &mut res.ptr,
+            x.ptr,
+            dims,
+            traditional,
+            opt_base,
+            scale,
+            offset,
+            freqs_ptr,
+            default_stream(),
+        )
+    };
     res
 }
 
-pub fn fast_scaled_dot_product_attention(queries: &MlxArray, keys: &MlxArray, values: &MlxArray, scale: f32, mask: Option<&MlxArray>) -> MlxArray {
+pub fn fast_scaled_dot_product_attention(
+    queries: &MlxArray,
+    keys: &MlxArray,
+    values: &MlxArray,
+    scale: f32,
+    mask: Option<&MlxArray>,
+) -> MlxArray {
     let mut res = MlxArray::empty();
     let mask_arr = mask.map_or(std::ptr::null_mut(), |m| m.ptr);
-    let mask_mode = b"\0".as_ptr() as *const std::os::raw::c_char;
+    let mask_mode = c"".as_ptr();
     let sinks: ffi::mlx_array = std::ptr::null_mut();
-    unsafe { ffi::mlx_fast_scaled_dot_product_attention(&mut res.ptr, queries.ptr, keys.ptr, values.ptr, scale, mask_mode, mask_arr, sinks, default_stream()) };
+    unsafe {
+        ffi::mlx_fast_scaled_dot_product_attention(
+            &mut res.ptr,
+            queries.ptr,
+            keys.ptr,
+            values.ptr,
+            scale,
+            mask_mode,
+            mask_arr,
+            sinks,
+            default_stream(),
+        )
+    };
     res
 }
 
@@ -417,7 +612,9 @@ pub fn random_categorical(logits: &MlxArray, axis: i32, _num_samples: i32) -> Ml
     let mut key = MlxArray::empty();
     unsafe { ffi::mlx_random_key(&mut key.ptr, rand_seed()) };
     let mut res = MlxArray::empty();
-    unsafe { ffi::mlx_random_categorical(&mut res.ptr, logits.ptr, axis, key.ptr, default_stream()) };
+    unsafe {
+        ffi::mlx_random_categorical(&mut res.ptr, logits.ptr, axis, key.ptr, default_stream())
+    };
     res
 }
 

@@ -21,9 +21,9 @@ compile_error!("Features 'tch-backend' and 'mlx' are mutually exclusive");
 #[cfg(not(any(feature = "tch-backend", feature = "mlx")))]
 compile_error!("Either 'tch-backend' or 'mlx' feature must be enabled");
 
-pub mod tensor;
 #[cfg(feature = "mlx")]
 pub mod backend;
+pub mod tensor;
 
 pub mod audio;
 pub mod config;
@@ -36,7 +36,7 @@ pub mod voice;
 // Re-export main types
 pub use config::VoxtralConfig;
 pub use error::{Result, VoxtralError};
-pub use tensor::{Device, DType, Tensor};
+pub use tensor::{DType, Device, Tensor};
 
 /// Default output sample rate in Hz.
 pub const DEFAULT_SAMPLE_RATE: u32 = 24000;

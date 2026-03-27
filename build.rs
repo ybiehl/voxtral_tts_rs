@@ -88,10 +88,7 @@ fn build_mlx() {
     println!("cargo:rustc-link-lib=c++");
 
     // Embed RPATH for MLX libraries
-    println!(
-        "cargo:rustc-link-arg=-Wl,-rpath,{}",
-        lib_dir.display()
-    );
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
 
     // Rerun if mlx-c sources change
     println!("cargo:rerun-if-changed=mlx-c/CMakeLists.txt");

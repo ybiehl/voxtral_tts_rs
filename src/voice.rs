@@ -56,7 +56,10 @@ impl VoiceStore {
         let mut embeddings = HashMap::new();
 
         if !voice_dir.exists() {
-            tracing::warn!("Voice embedding directory not found: {}", voice_dir.display());
+            tracing::warn!(
+                "Voice embedding directory not found: {}",
+                voice_dir.display()
+            );
             return Ok(Self { embeddings });
         }
 
@@ -94,14 +97,14 @@ impl VoiceStore {
     /// Get a voice embedding by name (resolves aliases).
     pub fn get(&self, name: &str) -> Result<&Tensor> {
         let resolved = resolve_voice_alias(name);
-        self.embeddings
-            .get(&resolved)
-            .ok_or_else(|| VoxtralError::VoiceNotFound(format!(
+        self.embeddings.get(&resolved).ok_or_else(|| {
+            VoxtralError::VoiceNotFound(format!(
                 "Voice '{}' (resolved to '{}') not found. Available: {:?}",
                 name,
                 resolved,
                 self.list_voices(),
-            )))
+            ))
+        })
     }
 
     /// List all available voice names.

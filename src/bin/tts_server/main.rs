@@ -68,7 +68,10 @@ async fn main() -> anyhow::Result<()> {
     // Build Axum router.
     let app = axum::Router::new()
         .route("/health", axum::routing::get(routes::health::health_check))
-        .route("/v1/models", axum::routing::get(routes::models::list_models))
+        .route(
+            "/v1/models",
+            axum::routing::get(routes::models::list_models),
+        )
         .route(
             "/v1/audio/speech",
             axum::routing::post(routes::speech::create_speech),

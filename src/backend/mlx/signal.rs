@@ -76,7 +76,12 @@ pub fn constant_pad_nd(x: &MlxArray, pad_widths: &[i32], val: f32) -> MlxArray {
 }
 
 /// Short-Time Fourier Transform — returns complex magnitudes.
-pub fn stft_magnitude(signal: &MlxArray, n_fft: i32, hop_length: i32, window: &MlxArray) -> MlxArray {
+pub fn stft_magnitude(
+    signal: &MlxArray,
+    n_fft: i32,
+    hop_length: i32,
+    window: &MlxArray,
+) -> MlxArray {
     let padded_len = signal.shape()[0];
     let n_frames = (padded_len - n_fft) / hop_length + 1;
 

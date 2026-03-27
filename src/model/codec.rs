@@ -16,7 +16,7 @@ use crate::config::AudioTokenizerConfig;
 use crate::error::{Result, VoxtralError};
 use crate::tensor::{DType, Device, Tensor};
 
-use super::layers::{Linear, RMSNorm, RotaryEmbedding, TransformerLayer};
+use super::layers::{RotaryEmbedding, TransformerLayer};
 
 // ---------------------------------------------------------------------------
 // Weight-normalized Conv1d
@@ -124,9 +124,9 @@ struct CodecTransformerLayer {
     /// The base transformer layer (attention + FFN).
     base: TransformerLayer,
     /// Per-channel scale after attention output.
-    attention_scale: Option<Tensor>,
+    _attention_scale: Option<Tensor>,
     /// Per-channel scale after FFN output.
-    ffn_scale: Option<Tensor>,
+    _ffn_scale: Option<Tensor>,
 }
 
 impl CodecTransformerLayer {
@@ -144,16 +144,14 @@ impl CodecTransformerLayer {
             config.qk_norm_eps,
         );
 
-        let attention_scale = weights
-            .get(&format!("{}.attention_scale", prefix))
-            .cloned();
+        let attention_scale = weights.get(&format!("{}.attention_scale", prefix)).cloned();
 
         let ffn_scale = weights.get(&format!("{}.ffn_scale", prefix)).cloned();
 
         Self {
             base,
-            attention_scale,
-            ffn_scale,
+            _attention_scale: attention_scale,
+            _ffn_scale: ffn_scale,
         }
     }
 
@@ -190,6 +188,7 @@ pub struct Codec {
     /// Configuration.
     config: AudioTokenizerConfig,
     /// RoPE for codec transformer layers.
+    #[allow(dead_code)]
     rotary_emb: RotaryEmbedding,
 }
 
@@ -218,12 +217,18 @@ impl Codec {
         // codebook = embedding_sum / cluster_usage
         let semantic_codebook = {
             let embedding_sum = weights
-                .get(&format!("{}.quantizer.semantic_codebook.embedding_sum", prefix))
+                .get(&format!(
+                    "{}.quantizer.semantic_codebook.embedding_sum",
+                    prefix
+                ))
                 .cloned()
                 .unwrap_or_else(|| {
                     tracing::warn!("Semantic codebook embedding_sum not found");
                     Tensor::zeros(
-                        &[config.semantic_codebook_size as i64, config.semantic_dim as i64],
+                        &[
+                            config.semantic_codebook_size as i64,
+                            config.semantic_dim as i64,
+                        ],
                         DType::Float32,
                         device,
                     )
@@ -253,10 +258,7 @@ impl Codec {
             &embedding_sum / &usage_clamped
         };
 
-        tracing::debug!(
-            "Semantic codebook computed: {:?}",
-            semantic_codebook.size()
-        );
+        tracing::debug!("Semantic codebook computed: {:?}", semantic_codebook.size());
 
         // Build decoder blocks
         // The decoder has alternating conv and transformer blocks:
@@ -305,9 +307,16 @@ impl Codec {
                     ));
                 }
             } else {
-                tracing::warn!("Decoder conv block {} not found, using identity", conv_block_idx);
+                tracing::warn!(
+                    "Decoder conv block {} not found, using identity",
+                    conv_block_idx
+                );
                 // Fallback: identity-like conv
-                let w = Tensor::zeros(&[config.dim as i64, config.dim as i64, 1], DType::Float32, device);
+                let w = Tensor::zeros(
+                    &[config.dim as i64, config.dim as i64, 1],
+                    DType::Float32,
+                    device,
+                );
                 decoder_convs.push(DecoderConv::Conv1d(WNConv1d {
                     weight: w,
                     stride: 1,
@@ -317,12 +326,7 @@ impl Codec {
 
             // Load transformer block
             let n_layers = config.decoder_transformer_lengths[i];
-            let rotary_emb = RotaryEmbedding::new(
-                config.head_dim,
-                8192,
-                10000.0,
-                device,
-            );
+            let rotary_emb = RotaryEmbedding::new(config.head_dim, 8192, 10000.0, device);
 
             let mut layers = Vec::with_capacity(n_layers);
             for j in 0..n_layers {
@@ -338,29 +342,32 @@ impl Codec {
         }
 
         // Output projection conv
-        let output_g_key =
-            format!("{}.output_proj.conv.parametrizations.weight.original0", prefix);
-        let output_v_key =
-            format!("{}.output_proj.conv.parametrizations.weight.original1", prefix);
+        let output_g_key = format!(
+            "{}.output_proj.conv.parametrizations.weight.original0",
+            prefix
+        );
+        let output_v_key = format!(
+            "{}.output_proj.conv.parametrizations.weight.original1",
+            prefix
+        );
 
-        let output_proj = if let (Some(g), Some(v)) =
-            (weights.get(&output_g_key), weights.get(&output_v_key))
-        {
-            let g = g.to_dtype(DType::Float32).to_device(device);
-            let v = v.to_dtype(DType::Float32).to_device(device);
-            WNConv1d::from_weight_norm(&g, &v, 1, 3) // kernel=7, padding=3
-        } else {
-            tracing::warn!("Output projection not found, using zeros");
-            WNConv1d {
-                weight: Tensor::zeros(
-                    &[crate::PRETRANSFORM_PATCH_SIZE as i64, config.dim as i64, 7],
-                    DType::Float32,
-                    device,
-                ),
-                stride: 1,
-                padding: 3,
-            }
-        };
+        let output_proj =
+            if let (Some(g), Some(v)) = (weights.get(&output_g_key), weights.get(&output_v_key)) {
+                let g = g.to_dtype(DType::Float32).to_device(device);
+                let v = v.to_dtype(DType::Float32).to_device(device);
+                WNConv1d::from_weight_norm(&g, &v, 1, 3) // kernel=7, padding=3
+            } else {
+                tracing::warn!("Output projection not found, using zeros");
+                WNConv1d {
+                    weight: Tensor::zeros(
+                        &[crate::PRETRANSFORM_PATCH_SIZE as i64, config.dim as i64, 7],
+                        DType::Float32,
+                        device,
+                    ),
+                    stride: 1,
+                    padding: 3,
+                }
+            };
 
         let rotary_emb = RotaryEmbedding::new(config.head_dim, 8192, 10000.0, device);
 
@@ -461,8 +468,12 @@ impl Codec {
     /// Run the decoder network.
     fn run_decoder(&self, x: &Tensor) -> Tensor {
         // x: [B, 292, T]
-        tracing::debug!("Decoder input: {:?}, {} conv blocks, {} transformer blocks",
-            x.size(), self.decoder_convs.len(), self.decoder_transformers.len());
+        tracing::debug!(
+            "Decoder input: {:?}, {} conv blocks, {} transformer blocks",
+            x.size(),
+            self.decoder_convs.len(),
+            self.decoder_transformers.len()
+        );
 
         let mut h = x.transpose(1, 2); // [B, T, D=292]
 
@@ -487,7 +498,12 @@ impl Codec {
             for (j, layer) in transformer_block.layers.iter().enumerate() {
                 h = layer.forward(&h, &transformer_block.rotary_emb);
                 h.eval();
-                tracing::debug!("Decoder block {} transformer {} output: {:?}", i, j, h.size());
+                tracing::debug!(
+                    "Decoder block {} transformer {} output: {:?}",
+                    i,
+                    j,
+                    h.size()
+                );
             }
         }
 

@@ -13,7 +13,6 @@
 use std::collections::HashMap;
 
 use crate::config::AcousticTransformerConfig;
-use crate::error::{Result, VoxtralError};
 use crate::tensor::{DType, Device, Tensor};
 
 use super::layers::{Linear, RMSNorm, RotaryEmbedding, TransformerLayer};
@@ -149,11 +148,7 @@ impl FlowMatchingTransformer {
     /// - `acoustic_codes` is a Vec of 36 values, each in [2, 22] (with AudioSpecialTokens offset)
     ///
     /// Returns `None` if end-of-audio is predicted.
-    pub fn generate_frame(
-        &self,
-        llm_hidden: &Tensor,
-        device: Device,
-    ) -> Option<Vec<i64>> {
+    pub fn generate_frame(&self, llm_hidden: &Tensor, device: Device) -> Option<Vec<i64>> {
         llm_hidden.eval();
 
         // 1. Predict semantic code from LLM hidden state
@@ -166,15 +161,17 @@ impl FlowMatchingTransformer {
         // Valid semantic codes are in [2, 2 + 8192) = [2, 8194)
         let mut logits_vec = semantic_logits.to_vec_f32();
         // Mask special tokens (0, 1) and padding (>= 8194)
-        if logits_vec.len() > 0 {
+        if !logits_vec.is_empty() {
             logits_vec[0] = f32::NEG_INFINITY; // end-of-audio
         }
         if logits_vec.len() > 1 {
             logits_vec[1] = f32::NEG_INFINITY; // padding
         }
-        for i in (crate::NUM_AUDIO_SPECIAL_TOKENS + crate::SEMANTIC_CODEBOOK_SIZE)..logits_vec.len()
+        for v in logits_vec
+            .iter_mut()
+            .skip(crate::NUM_AUDIO_SPECIAL_TOKENS + crate::SEMANTIC_CODEBOOK_SIZE)
         {
-            logits_vec[i] = f32::NEG_INFINITY; // padding beyond valid range
+            *v = f32::NEG_INFINITY; // padding beyond valid range
         }
 
         let semantic_logits = Tensor::from_slice_f32(&logits_vec).to_device(device);
@@ -199,8 +196,7 @@ impl FlowMatchingTransformer {
     /// Euler ODE integration with classifier-free guidance to produce 36 acoustic codes.
     fn decode_acoustic(&self, llm_hidden: &Tensor, device: Device) -> Vec<i64> {
         // Initialize from noise: x_0 ~ N(0, noise_scale^2)
-        let mut x = Tensor::random_normal(&[1, 36], DType::Float32, device)
-            * NOISE_SCALE;
+        let mut x = Tensor::random_normal(&[1, 36], DType::Float32, device) * NOISE_SCALE;
 
         // Timesteps: linspace(0, 1, NUM_EULER_STEPS)
         let llm_zero = Tensor::zeros(&[self.config.dim as i64], DType::Float32, device);
@@ -268,8 +264,7 @@ impl FlowMatchingTransformer {
         // Forward through bidirectional transformer layers (no causal mask)
         let mut h = h;
         for layer in &self.layers {
-            let (out, _k, _v) =
-                layer.forward(&h, &self.rotary_emb, 0, None, false);
+            let (out, _k, _v) = layer.forward(&h, &self.rotary_emb, 0, None, false);
             out.eval();
             h = out;
         }

@@ -104,10 +104,9 @@ impl RotaryEmbedding {
     pub fn new(dim: usize, max_seq_len: usize, theta: f64, device: Device) -> Self {
         // freq_i = 1 / theta^(2i / dim)  for i in 0..dim/2
         let half_dim = dim / 2;
-        let mut inv_freq = vec![0.0f32; half_dim];
-        for i in 0..half_dim {
-            inv_freq[i] = 1.0 / (theta as f32).powf(2.0 * i as f32 / dim as f32);
-        }
+        let inv_freq: Vec<f32> = (0..half_dim)
+            .map(|i| 1.0 / (theta as f32).powf(2.0 * i as f32 / dim as f32))
+            .collect();
         let inv_freq_t = Tensor::from_slice_f32(&inv_freq)
             .to_device(device)
             .reshape(&[1, half_dim as i64]); // [1, dim/2]
@@ -222,18 +221,10 @@ impl Attention {
         n_kv_heads: usize,
         head_dim: usize,
     ) -> Self {
-        let wq = Linear::from_weights(
-            weights[&format!("{}.wq.weight", prefix)].clone(),
-        );
-        let wk = Linear::from_weights(
-            weights[&format!("{}.wk.weight", prefix)].clone(),
-        );
-        let wv = Linear::from_weights(
-            weights[&format!("{}.wv.weight", prefix)].clone(),
-        );
-        let wo = Linear::from_weights(
-            weights[&format!("{}.wo.weight", prefix)].clone(),
-        );
+        let wq = Linear::from_weights(weights[&format!("{}.wq.weight", prefix)].clone());
+        let wk = Linear::from_weights(weights[&format!("{}.wk.weight", prefix)].clone());
+        let wv = Linear::from_weights(weights[&format!("{}.wv.weight", prefix)].clone());
+        let wo = Linear::from_weights(weights[&format!("{}.wo.weight", prefix)].clone());
         Self {
             wq,
             wk,
@@ -266,8 +257,13 @@ impl Attention {
         let batch = shape[0];
         let seq_len = shape[1] as usize;
 
-        tracing::trace!("Attention input: {:?}, heads={}, kv_heads={}, head_dim={}",
-            shape, self.n_heads, self.n_kv_heads, self.head_dim);
+        tracing::trace!(
+            "Attention input: {:?}, heads={}, kv_heads={}, head_dim={}",
+            shape,
+            self.n_heads,
+            self.n_kv_heads,
+            self.head_dim
+        );
 
         // Project Q, K, V
         let q = self.wq.forward(x); // [B, S, n_heads * head_dim]
@@ -276,13 +272,28 @@ impl Attention {
 
         // Reshape to multi-head format: [B, S, nH, D] -> [B, nH, S, D]
         let q = q
-            .reshape(&[batch, seq_len as i64, self.n_heads as i64, self.head_dim as i64])
+            .reshape(&[
+                batch,
+                seq_len as i64,
+                self.n_heads as i64,
+                self.head_dim as i64,
+            ])
             .transpose(1, 2);
         let k = k
-            .reshape(&[batch, seq_len as i64, self.n_kv_heads as i64, self.head_dim as i64])
+            .reshape(&[
+                batch,
+                seq_len as i64,
+                self.n_kv_heads as i64,
+                self.head_dim as i64,
+            ])
             .transpose(1, 2);
         let v = v
-            .reshape(&[batch, seq_len as i64, self.n_kv_heads as i64, self.head_dim as i64])
+            .reshape(&[
+                batch,
+                seq_len as i64,
+                self.n_kv_heads as i64,
+                self.head_dim as i64,
+            ])
             .transpose(1, 2);
 
         // Apply rotary positional embedding
@@ -320,12 +331,8 @@ impl Attention {
         // Apply causal mask if needed
         let scores = if causal && seq_len > 1 {
             // Build a causal mask: positions can only attend to earlier positions
-            let mask = Tensor::ones(
-                &[seq_len as i64, kv_seq_len],
-                DType::Bool,
-                x.device(),
-            )
-            .triu(kv_seq_len - seq_len as i64 + 1);
+            let mask = Tensor::ones(&[seq_len as i64, kv_seq_len], DType::Bool, x.device())
+                .triu(kv_seq_len - seq_len as i64 + 1);
             scores.masked_fill(&mask, f64::NEG_INFINITY)
         } else {
             scores
@@ -335,10 +342,11 @@ impl Attention {
         let context = attn.matmul(&v); // [B, nH, S, D]
 
         // Reshape back: [B, nH, S, D] -> [B, S, nH*D]
-        let context = context
-            .transpose(1, 2)
-            .contiguous()
-            .reshape(&[batch, seq_len as i64, (self.n_heads * self.head_dim) as i64]);
+        let context = context.transpose(1, 2).contiguous().reshape(&[
+            batch,
+            seq_len as i64,
+            (self.n_heads * self.head_dim) as i64,
+        ]);
 
         // Output projection
         let output = self.wo.forward(&context);
@@ -389,15 +397,9 @@ impl MLP {
     /// * `{prefix}.w2.weight` – down projection
     /// * `{prefix}.w3.weight` – up projection
     pub fn from_weights(weights: &HashMap<String, Tensor>, prefix: &str) -> Self {
-        let gate = Linear::from_weights(
-            weights[&format!("{}.w1.weight", prefix)].clone(),
-        );
-        let down = Linear::from_weights(
-            weights[&format!("{}.w2.weight", prefix)].clone(),
-        );
-        let up = Linear::from_weights(
-            weights[&format!("{}.w3.weight", prefix)].clone(),
-        );
+        let gate = Linear::from_weights(weights[&format!("{}.w1.weight", prefix)].clone());
+        let down = Linear::from_weights(weights[&format!("{}.w2.weight", prefix)].clone());
+        let up = Linear::from_weights(weights[&format!("{}.w3.weight", prefix)].clone());
         Self { gate, down, up }
     }
 
@@ -485,8 +487,9 @@ impl TransformerLayer {
     ) -> (Tensor, Tensor, Tensor) {
         // Pre-norm attention with residual
         let normed = self.attention_norm.forward(x);
-        let (attn_out, new_k, new_v) =
-            self.attention.forward(&normed, rotary_emb, pos, kv_cache, causal);
+        let (attn_out, new_k, new_v) = self
+            .attention
+            .forward(&normed, rotary_emb, pos, kv_cache, causal);
         let h = x + &attn_out;
 
         // Pre-norm FFN with residual

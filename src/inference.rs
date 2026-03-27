@@ -14,7 +14,7 @@ use crate::model::backbone::Backbone;
 use crate::model::codec::Codec;
 use crate::model::flow_matching::FlowMatchingTransformer;
 use crate::model::weights::load_model_weights;
-use crate::tensor::{DType, Device, Tensor};
+use crate::tensor::{Device, Tensor};
 use crate::tokenizer::TekkenTokenizer;
 use crate::voice::VoiceStore;
 
@@ -52,8 +52,7 @@ impl VoxtralTTS {
         let voices = VoiceStore::from_dir(model_dir, device)?;
 
         // Load model weights
-        let (backbone, flow_matching, codec) =
-            load_model_weights(model_dir, &config, device)?;
+        let (backbone, flow_matching, codec) = load_model_weights(model_dir, &config, device)?;
         tracing::info!("Model weights loaded");
 
         Ok(Self {
@@ -85,7 +84,11 @@ impl VoxtralTTS {
         let voice_embedding = self.voices.get(voice)?;
         let voice_shape = voice_embedding.size();
         let n_voice_frames = voice_shape[0] as usize;
-        tracing::debug!("Voice embedding: {} frames x {} dim", n_voice_frames, voice_shape[1]);
+        tracing::debug!(
+            "Voice embedding: {} frames x {} dim",
+            n_voice_frames,
+            voice_shape[1]
+        );
 
         // Tokenize text
         let text_tokens: Vec<u32> = self.tokenizer.encode(text);
@@ -93,7 +96,6 @@ impl VoxtralTTS {
 
         // Build input embedding sequence:
         // [text_token_embeddings..., begin_audio_token, voice_embeddings...]
-        let dim = self.backbone.dim() as i64;
         let total_prefix_len = text_tokens.len() + 1 + n_voice_frames; // text + begin_audio + voice
         let mut embeddings_data = Vec::with_capacity(total_prefix_len);
 
@@ -117,15 +119,18 @@ impl VoxtralTTS {
         let prefix_embeddings = Tensor::stack(&embeddings_data, 0) // [total_prefix_len, dim]
             .unsqueeze(0); // [1, total_prefix_len, dim]
 
-        tracing::debug!("Prefix: {} tokens (text={}, voice={})",
-            total_prefix_len, text_tokens.len() + 1, n_voice_frames);
+        tracing::debug!(
+            "Prefix: {} tokens (text={}, voice={})",
+            total_prefix_len,
+            text_tokens.len() + 1,
+            n_voice_frames
+        );
 
         // Prefill backbone
         let mut kv_cache = self.backbone.new_kv_cache();
-        let mut hidden_state = self.backbone.forward_prefill_embeddings(
-            &prefix_embeddings,
-            &mut kv_cache,
-        );
+        let mut hidden_state = self
+            .backbone
+            .forward_prefill_embeddings(&prefix_embeddings, &mut kv_cache);
 
         tracing::debug!("Prefill done, KV cache seq_len={}", kv_cache.seq_len());
 
@@ -135,7 +140,10 @@ impl VoxtralTTS {
 
         for frame_idx in 0..max_frames {
             // Generate one frame of 37 codes from the current hidden state
-            let codes = match self.flow_matching.generate_frame(&hidden_state, self.device) {
+            let codes = match self
+                .flow_matching
+                .generate_frame(&hidden_state, self.device)
+            {
                 Some(codes) => codes,
                 None => {
                     tracing::debug!("End-of-audio at frame {}", frame_idx);
@@ -150,12 +158,16 @@ impl VoxtralTTS {
             all_codes.push(codes);
 
             // Forward one step through the backbone
-            hidden_state = self.backbone.forward_one_embedding(&next_embedding, &mut kv_cache);
+            hidden_state = self
+                .backbone
+                .forward_one_embedding(&next_embedding, &mut kv_cache);
 
             if frame_idx % 50 == 0 && frame_idx > 0 {
-                tracing::debug!("Generated {} frames ({:.1}s)",
+                tracing::debug!(
+                    "Generated {} frames ({:.1}s)",
                     frame_idx,
-                    frame_idx as f64 / crate::FRAME_RATE as f64);
+                    frame_idx as f64 / crate::FRAME_RATE as f64
+                );
             }
         }
 
@@ -165,9 +177,11 @@ impl VoxtralTTS {
             ));
         }
 
-        tracing::info!("Generated {} audio frames ({:.2}s)",
+        tracing::info!(
+            "Generated {} audio frames ({:.2}s)",
             all_codes.len(),
-            all_codes.len() as f64 / crate::FRAME_RATE as f64);
+            all_codes.len() as f64 / crate::FRAME_RATE as f64
+        );
 
         // Decode audio codes to waveform via codec
         let waveform = self.codec.decode(&all_codes, self.device)?;

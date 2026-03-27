@@ -29,6 +29,7 @@ const MAX_SPEED: f32 = 4.0;
 pub struct SpeechRequest {
     /// Model name (currently only "voxtral-4b-tts" is accepted).
     #[serde(default = "default_model")]
+    #[allow(dead_code)]
     pub model: String,
 
     /// Text to synthesize.
@@ -82,6 +83,7 @@ struct ErrorDetail {
 
 /// SSE streaming chunk.
 #[derive(Serialize)]
+#[allow(dead_code)]
 struct StreamChunk {
     /// Base64-encoded PCM audio bytes.
     audio: String,
@@ -166,9 +168,9 @@ async fn handle_non_streaming(state: AppState, req: SpeechRequest) -> Response {
 
     // Run inference on a blocking thread to avoid starving the Tokio runtime.
     let result = tokio::task::spawn_blocking(move || {
-        let tts = state.lock().map_err(|e| {
-            VoxtralError::Inference(format!("Failed to acquire model lock: {}", e))
-        })?;
+        let tts = state
+            .lock()
+            .map_err(|e| VoxtralError::Inference(format!("Failed to acquire model lock: {}", e)))?;
         tts.generate(&input, &voice, 0.7, 4096)
     })
     .await;
@@ -197,12 +199,7 @@ async fn handle_non_streaming(state: AppState, req: SpeechRequest) -> Response {
                 }
             };
 
-            (
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, content_type)],
-                body,
-            )
-                .into_response()
+            (StatusCode::OK, [(header::CONTENT_TYPE, content_type)], body).into_response()
         }
         Ok(Err(e)) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -227,7 +224,9 @@ async fn handle_streaming(state: AppState, req: SpeechRequest) -> Response {
     let voice = req.voice.clone();
     let input = req.input.clone();
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::response::sse::Event, std::convert::Infallible>>(32);
+    let (tx, rx) = tokio::sync::mpsc::channel::<
+        Result<axum::response::sse::Event, std::convert::Infallible>,
+    >(32);
 
     // Spawn inference on a blocking thread.
     tokio::task::spawn_blocking(move || {
@@ -248,15 +247,13 @@ async fn handle_streaming(state: AppState, req: SpeechRequest) -> Response {
 
                 for (i, chunk) in chunks.into_iter().enumerate() {
                     let pcm_bytes = voxtral_tts::audio::encode_pcm_i16(chunk);
-                    let b64 = base64::engine::general_purpose::STANDARD
-                        .encode(&pcm_bytes);
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&pcm_bytes);
                     let is_last = i + 1 == total;
                     let payload = serde_json::json!({
                         "audio": b64,
                         "done": is_last,
                     });
-                    let event = axum::response::sse::Event::default()
-                        .data(payload.to_string());
+                    let event = axum::response::sse::Event::default().data(payload.to_string());
                     if tx.blocking_send(Ok(event)).is_err() {
                         break; // Client disconnected.
                     }
@@ -268,8 +265,7 @@ async fn handle_streaming(state: AppState, req: SpeechRequest) -> Response {
                     "error": e.to_string(),
                     "done": true,
                 });
-                let event = axum::response::sse::Event::default()
-                    .data(payload.to_string());
+                let event = axum::response::sse::Event::default().data(payload.to_string());
                 let _ = tx.blocking_send(Ok(event));
             }
         }

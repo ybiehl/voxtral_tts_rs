@@ -259,8 +259,9 @@ fn default_acoustic_rope_theta() -> f64 {
 impl VoxtralConfig {
     /// Load configuration from a params.json file.
     pub fn from_file(path: &Path) -> Result<Self> {
-        let contents = std::fs::read_to_string(path)
-            .map_err(|e| VoxtralError::Config(format!("Failed to read {}: {}", path.display(), e)))?;
+        let contents = std::fs::read_to_string(path).map_err(|e| {
+            VoxtralError::Config(format!("Failed to read {}: {}", path.display(), e))
+        })?;
         let config: Self = serde_json::from_str(&contents)
             .map_err(|e| VoxtralError::Config(format!("Failed to parse params.json: {}", e)))?;
         Ok(config)
@@ -293,7 +294,8 @@ impl VoxtralConfig {
 
     /// Get the audio tokenizer config, or defaults.
     pub fn audio_tokenizer_config(&self) -> AudioTokenizerConfig {
-        let mut config = self.multimodal
+        let mut config = self
+            .multimodal
             .as_ref()
             .and_then(|m| m.audio_tokenizer_args.clone())
             .unwrap_or(AudioTokenizerConfig {

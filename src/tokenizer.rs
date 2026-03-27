@@ -58,19 +58,11 @@ impl TekkenTokenizer {
     /// Load the tokenizer from a `tekken.json` file.
     pub fn from_file(path: &Path) -> Result<Self> {
         let data = std::fs::read_to_string(path).map_err(|e| {
-            VoxtralError::Tokenizer(format!(
-                "Failed to read {}: {}",
-                path.display(),
-                e
-            ))
+            VoxtralError::Tokenizer(format!("Failed to read {}: {}", path.display(), e))
         })?;
 
-        let parsed: TekkenJson = serde_json::from_str(&data).map_err(|e| {
-            VoxtralError::Tokenizer(format!(
-                "Failed to parse tekken.json: {}",
-                e
-            ))
-        })?;
+        let parsed: TekkenJson = serde_json::from_str(&data)
+            .map_err(|e| VoxtralError::Tokenizer(format!("Failed to parse tekken.json: {}", e)))?;
 
         let entries = match parsed {
             TekkenJson::WithVocab { vocab } => vocab,
@@ -126,8 +118,7 @@ impl TekkenTokenizer {
         // Build merge table. For every token whose byte sequence is >1 byte
         // we find the best split into two existing tokens (both of which must
         // have a *lower* rank) and record that as a merge pair.
-        for idx in 0..vocab_size {
-            let bytes = &rank_to_bytes[idx];
+        for (idx, bytes) in rank_to_bytes.iter().enumerate() {
             if bytes.len() <= 1 {
                 continue;
             }
@@ -140,9 +131,7 @@ impl TekkenTokenizer {
                 let left = &bytes[..split];
                 let right = &bytes[split..];
 
-                if let (Some(&lid), Some(&rid)) =
-                    (token_to_id.get(left), token_to_id.get(right))
-                {
+                if let (Some(&lid), Some(&rid)) = (token_to_id.get(left), token_to_id.get(right)) {
                     // Both halves must have strictly lower rank (== earlier in vocab).
                     if (lid as usize) < idx && (rid as usize) < idx {
                         let worst = lid.max(rid);
@@ -253,19 +242,13 @@ impl TekkenTokenizer {
         segments
             .iter()
             .map(|seg| {
-                self.token_to_id
-                    .get(seg)
-                    .copied()
-                    .unwrap_or_else(|| {
-                        // Fallback: encode as individual byte tokens.
-                        // This should not happen if the vocab is complete, but
-                        // it prevents panics.
-                        tracing::warn!(
-                            "Token not found for byte sequence of length {}",
-                            seg.len()
-                        );
-                        0
-                    })
+                self.token_to_id.get(seg).copied().unwrap_or_else(|| {
+                    // Fallback: encode as individual byte tokens.
+                    // This should not happen if the vocab is complete, but
+                    // it prevents panics.
+                    tracing::warn!("Token not found for byte sequence of length {}", seg.len());
+                    0
+                })
             })
             .collect()
     }
@@ -314,8 +297,7 @@ mod tests {
         // Build a minimal tokenizer with only byte tokens (no merges).
         let mut entries = Vec::new();
         for i in 0u32..256 {
-            let token_bytes =
-                base64::engine::general_purpose::STANDARD.encode([i as u8]);
+            let token_bytes = base64::engine::general_purpose::STANDARD.encode([i as u8]);
             entries.push(VocabEntry {
                 rank: i,
                 token_bytes,
