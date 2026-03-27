@@ -30,6 +30,7 @@ pub mod config;
 pub mod error;
 pub mod inference;
 pub mod model;
+pub mod text;
 pub mod tokenizer;
 pub mod voice;
 

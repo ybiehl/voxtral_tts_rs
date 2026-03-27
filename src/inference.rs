@@ -200,6 +200,134 @@ impl VoxtralTTS {
         Ok((waveform, crate::DEFAULT_SAMPLE_RATE))
     }
 
+    /// Generate speech with frame-level streaming.
+    ///
+    /// Instead of waiting for all frames, decodes and sends audio every
+    /// `chunk_frames` frames. The first chunk uses `first_chunk_frames` for
+    /// faster time-to-first-audio.
+    ///
+    /// `on_audio` is called with each PCM chunk. Return `true` to continue,
+    /// `false` to stop (e.g., client disconnected).
+    pub fn generate_streaming<F>(
+        &self,
+        text: &str,
+        voice: &str,
+        max_tokens: usize,
+        first_chunk_frames: usize,
+        chunk_frames: usize,
+        mut on_audio: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&[f32]) -> bool,
+    {
+        if text.is_empty() {
+            return Err(VoxtralError::Inference("Input text is empty".to_string()));
+        }
+
+        let voice_embedding = self.voices.get(voice)?;
+        let voice_shape = voice_embedding.size();
+        let n_voice_frames = voice_shape[0] as usize;
+
+        let text_tokens: Vec<u32> = self.tokenizer.encode(text);
+        let total_prefix_len = text_tokens.len() + 1 + n_voice_frames;
+        let mut embeddings_data = Vec::with_capacity(total_prefix_len);
+
+        for &token_id in &text_tokens {
+            embeddings_data.push(self.backbone.embed_text_token(token_id as i64));
+        }
+        embeddings_data.push(self.backbone.embed_text_token(crate::BEGIN_AUDIO_TOKEN_ID));
+        for i in 0..n_voice_frames {
+            embeddings_data.push(voice_embedding.select(0, i as i64));
+        }
+
+        let prefix_embeddings = Tensor::stack(&embeddings_data, 0).unsqueeze(0);
+
+        let mut kv_cache = self.backbone.new_kv_cache();
+        let prefill_start = std::time::Instant::now();
+        let mut hidden_state = self
+            .backbone
+            .forward_prefill_embeddings(&prefix_embeddings, &mut kv_cache);
+        tracing::info!(
+            "Prefill: {:.2}s (seq_len={})",
+            prefill_start.elapsed().as_secs_f64(),
+            kv_cache.seq_len()
+        );
+
+        let max_frames = max_tokens / crate::TOKENS_PER_FRAME;
+        let gen_start = std::time::Instant::now();
+        let mut pending_codes: Vec<Vec<i64>> = Vec::new();
+        let mut total_frames = 0usize;
+        let mut total_audio_samples = 0usize;
+
+        for frame_idx in 0..max_frames {
+            let codes = match self
+                .flow_matching
+                .generate_frame(&hidden_state, self.device)
+            {
+                Some(codes) => codes,
+                None => {
+                    tracing::debug!("End-of-audio at frame {}", frame_idx);
+                    break;
+                }
+            };
+
+            let next_embedding = self.backbone.embed_audio_codes(&codes);
+            pending_codes.push(codes);
+            total_frames += 1;
+
+            hidden_state = self
+                .backbone
+                .forward_one_embedding(&next_embedding, &mut kv_cache);
+
+            // Determine if we should flush this batch
+            let target = if total_audio_samples == 0 {
+                first_chunk_frames
+            } else {
+                chunk_frames
+            };
+
+            if pending_codes.len() >= target {
+                let waveform = self.codec.decode(&pending_codes, self.device)?;
+                let audio_dur = waveform.len() as f64 / crate::DEFAULT_SAMPLE_RATE as f64;
+                total_audio_samples += waveform.len();
+                tracing::info!(
+                    "Streaming chunk: {} frames, {:.1}s audio (total {:.1}s, {:.1}s elapsed)",
+                    pending_codes.len(),
+                    audio_dur,
+                    total_audio_samples as f64 / crate::DEFAULT_SAMPLE_RATE as f64,
+                    gen_start.elapsed().as_secs_f64(),
+                );
+                pending_codes.clear();
+
+                if !on_audio(&waveform) {
+                    tracing::info!("Client disconnected at frame {}", frame_idx);
+                    return Ok(());
+                }
+            }
+        }
+
+        // Flush remaining frames
+        if !pending_codes.is_empty() {
+            let waveform = self.codec.decode(&pending_codes, self.device)?;
+            total_audio_samples += waveform.len();
+            tracing::info!(
+                "Streaming final chunk: {} frames (total {:.1}s in {:.1}s)",
+                pending_codes.len(),
+                total_audio_samples as f64 / crate::DEFAULT_SAMPLE_RATE as f64,
+                gen_start.elapsed().as_secs_f64(),
+            );
+            on_audio(&waveform);
+        }
+
+        if total_frames == 0 {
+            return Err(VoxtralError::Inference(
+                "Generated zero audio frames".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Generate speech from text using a reference audio file for voice cloning.
     pub fn generate_with_reference(
         &self,

@@ -81,15 +81,13 @@ struct ErrorDetail {
     code: &'static str,
 }
 
-/// SSE streaming chunk.
-#[derive(Serialize)]
-#[allow(dead_code)]
-struct StreamChunk {
-    /// Base64-encoded PCM audio bytes.
-    audio: String,
-    /// Whether this is the final chunk.
-    done: bool,
-}
+/// Number of audio frames to accumulate before sending the first streaming chunk.
+/// Lower = faster time-to-first-audio. 10 frames ≈ 0.8s audio, arrives after ~6.7s.
+const STREAMING_FIRST_CHUNK_FRAMES: usize = 10;
+
+/// Number of audio frames per subsequent streaming chunk.
+/// 25 frames ≈ 2s audio.
+const STREAMING_CHUNK_FRAMES: usize = 25;
 
 // ---------------------------------------------------------------------------
 // Handler
@@ -226,53 +224,72 @@ async fn handle_streaming(state: AppState, req: SpeechRequest) -> Response {
 
     let (tx, rx) = tokio::sync::mpsc::channel::<
         Result<axum::response::sse::Event, std::convert::Infallible>,
-    >(32);
+    >(8);
 
     // Spawn inference on a blocking thread.
     tokio::task::spawn_blocking(move || {
         let tts = match state.lock() {
             Ok(guard) => guard,
             Err(e) => {
-                tracing::error!("Failed to acquire model lock: {}", e);
+                let payload = serde_json::json!({
+                    "type": "error",
+                    "error": { "message": format!("Failed to acquire model lock: {}", e) }
+                });
+                let _ = tx.blocking_send(Ok(
+                    axum::response::sse::Event::default().data(payload.to_string())
+                ));
                 return;
             }
         };
 
-        match tts.generate(&input, &voice, 0.7, 4096) {
-            Ok((samples, _sample_rate)) => {
-                // Chunk the PCM output into ~0.5s segments for streaming.
-                let chunk_size = 12000; // 0.5s at 24kHz
-                let chunks: Vec<&[f32]> = samples.chunks(chunk_size).collect();
-                let total = chunks.len();
+        let b64 = base64::engine::general_purpose::STANDARD;
 
-                for (i, chunk) in chunks.into_iter().enumerate() {
-                    let pcm_bytes = voxtral_tts::audio::encode_pcm_i16(chunk);
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&pcm_bytes);
-                    let is_last = i + 1 == total;
-                    let payload = serde_json::json!({
-                        "audio": b64,
-                        "done": is_last,
-                    });
-                    let event = axum::response::sse::Event::default().data(payload.to_string());
-                    if tx.blocking_send(Ok(event)).is_err() {
-                        break; // Client disconnected.
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!("Streaming inference failed: {}", e);
+        // Frame-level streaming: generate frames and send audio every N frames.
+        // First chunk is smaller for faster time-to-first-audio.
+        let result = tts.generate_streaming(
+            &input,
+            &voice,
+            4096,
+            STREAMING_FIRST_CHUNK_FRAMES,
+            STREAMING_CHUNK_FRAMES,
+            |samples| {
+                let pcm_bytes = voxtral_tts::audio::encode_pcm_i16(samples);
+                let delta = b64.encode(&pcm_bytes);
+
                 let payload = serde_json::json!({
-                    "error": e.to_string(),
-                    "done": true,
+                    "type": "speech.audio.delta",
+                    "delta": delta,
                 });
-                let event = axum::response::sse::Event::default().data(payload.to_string());
-                let _ = tx.blocking_send(Ok(event));
-            }
+                let event =
+                    axum::response::sse::Event::default().data(payload.to_string());
+                // Returns false if client disconnected
+                tx.blocking_send(Ok(event)).is_ok()
+            },
+        );
+
+        if let Err(e) = result {
+            tracing::error!("Streaming inference failed: {}", e);
+            let payload = serde_json::json!({
+                "type": "error",
+                "error": { "message": e.to_string() }
+            });
+            let _ = tx.blocking_send(Ok(
+                axum::response::sse::Event::default().data(payload.to_string())
+            ));
+            return;
         }
+
+        // Send done event
+        let payload = serde_json::json!({ "type": "speech.audio.done" });
+        let _ = tx.blocking_send(Ok(
+            axum::response::sse::Event::default().data(payload.to_string())
+        ));
     });
 
     let stream = ReceiverStream::new(rx);
-    Sse::new(stream).into_response()
+    Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------
