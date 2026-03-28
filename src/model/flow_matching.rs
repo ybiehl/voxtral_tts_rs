@@ -185,7 +185,7 @@ impl FlowMatchingTransformer {
             let (max_idx, max_val) = logits_vec.iter().enumerate()
                 .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or((0, &0.0));
-            tracing::debug!(
+            tracing::info!(
                 "Semantic logits: END_AUDIO[1]={:.4}, argmax[{}]={:.4}, gap={:.4}",
                 eos_logit, max_idx, max_val, max_val - eos_logit,
             );
