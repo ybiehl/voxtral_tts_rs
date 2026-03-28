@@ -112,7 +112,7 @@ pub fn encode_pcm_i16(samples: &[f32]) -> Vec<u8> {
 /// Resamples to 44100Hz before encoding. 24kHz is an MPEG-2 Layer III rate
 /// which causes playback issues (chipmunk effect) in many players.
 pub fn encode_mp3(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>> {
-    use mp3lame_encoder::{Builder, FlushNoGap, InterleavedPcm};
+    use mp3lame_encoder::{Builder, FlushNoGap, MonoPcm};
 
     // Resample to 44100Hz — standard MPEG-1 rate with universal player support
     let mp3_sample_rate = 44100u32;
@@ -151,7 +151,7 @@ pub fn encode_mp3(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>> {
         .map(|&s| (s * 32767.0).clamp(-32768.0, 32767.0) as i16)
         .collect();
 
-    let input = InterleavedPcm(&pcm);
+    let input = MonoPcm(&pcm);
     let mut mp3_out = Vec::with_capacity(mp3lame_encoder::max_required_buffer_size(pcm.len()));
 
     encoder.encode_to_vec(input, &mut mp3_out).map_err(|e| {
@@ -311,39 +311,30 @@ pub fn encode_audio(samples: &[f32], sample_rate: u32, format: &str) -> Result<(
     }
 }
 
-/// Resample audio from source_sr to target_sr using high-quality sinc interpolation.
+/// Resample audio from source_sr to target_sr using linear interpolation.
 pub fn resample(samples: &[f32], source_sr: u32, target_sr: u32) -> Result<Vec<f32>> {
-    if source_sr == target_sr {
+    if source_sr == target_sr || samples.is_empty() {
         return Ok(samples.to_vec());
     }
 
-    use rubato::{
-        Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
-    };
+    let ratio = target_sr as f64 / source_sr as f64;
+    let out_len = (samples.len() as f64 * ratio).ceil() as usize;
+    let mut output = Vec::with_capacity(out_len);
 
-    let params = SincInterpolationParameters {
-        sinc_len: 256,
-        f_cutoff: 0.95,
-        interpolation: SincInterpolationType::Linear,
-        oversampling_factor: 256,
-        window: WindowFunction::BlackmanHarris2,
-    };
+    for i in 0..out_len {
+        let src_pos = i as f64 / ratio;
+        let idx = src_pos as usize;
+        let frac = (src_pos - idx as f64) as f32;
 
-    let mut resampler = SincFixedIn::<f32>::new(
-        target_sr as f64 / source_sr as f64,
-        2.0,
-        params,
-        samples.len(),
-        1,
-    )
-    .map_err(|e| VoxtralError::Audio(format!("Resampler init failed: {}", e)))?;
+        let sample = if idx + 1 < samples.len() {
+            samples[idx] * (1.0 - frac) + samples[idx + 1] * frac
+        } else {
+            samples[samples.len() - 1]
+        };
+        output.push(sample);
+    }
 
-    let input = vec![samples.to_vec()];
-    let output = resampler
-        .process(&input, None)
-        .map_err(|e| VoxtralError::Audio(format!("Resampling failed: {}", e)))?;
-
-    Ok(output.into_iter().next().unwrap_or_default())
+    Ok(output)
 }
 
 /// Load and preprocess audio for the codec: load, resample to 24kHz, normalize.

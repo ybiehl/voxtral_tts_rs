@@ -293,7 +293,7 @@ The API server supports 6 output formats: `wav`, `pcm`, `mp3`, `flac`, `ogg`/`op
 
 ### Crate API Pitfalls
 
-**mp3lame-encoder**: Use `encode_to_vec()` and `flush_to_vec::<FlushNoGap>()`, not `encode()` / `flush()`. The non-vec variants require `&mut [MaybeUninit<u8>]` buffers and unsafe `set_len()`.
+**mp3lame-encoder**: Use `MonoPcm` (not `InterleavedPcm`) for mono audio — `InterleavedPcm` always divides sample count by 2, producing half-duration chipmunk audio. Use `encode_to_vec()` and `flush_to_vec::<FlushNoGap>()`, not `encode()` / `flush()`. The non-vec variants require `&mut [MaybeUninit<u8>]` buffers and unsafe `set_len()`.
 
 **flacenc**:
 - `into_verified()` returns `Result<Verified<Encoder>, (Encoder, VerifyError)>` — the error is a tuple, not a Display type. Map with `|(_enc, e)| ...`.

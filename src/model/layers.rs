@@ -439,9 +439,13 @@ impl Attention {
                     (k, v)
                 };
 
+                // GQA expansion may produce non-contiguous tensors; make contiguous for matmul
+                let k = k.contiguous();
+                let v = v.contiguous();
+
                 let kv_seq_len = k.size()[2];
-                let scale = (self.head_dim as f64).sqrt();
-                let scores = q.matmul(&k.transpose(-2, -1)) / scale;
+                let scale = 1.0 / (self.head_dim as f64).sqrt();
+                let scores = &q.matmul(&k.transpose(-2, -1).contiguous()) * scale;
 
                 let scores = if causal && seq_len > 1 {
                     let mut mask = Tensor::ones(&[seq_len as i64, kv_seq_len], DType::Bool, x.device())
@@ -536,8 +540,11 @@ impl Attention {
                     (k, v)
                 };
 
-                let scale = (self.head_dim as f64).sqrt();
-                let scores = q.matmul(&k.transpose(-2, -1)) / scale;
+                let k = k.contiguous();
+                let v = v.contiguous();
+
+                let scale = 1.0 / (self.head_dim as f64).sqrt();
+                let scores = &q.matmul(&k.transpose(-2, -1).contiguous()) * scale;
 
                 let scores = if causal && seq_len > 1 {
                     let kv_seq_len = k.size()[2];

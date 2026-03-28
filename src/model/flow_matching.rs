@@ -179,6 +179,18 @@ impl FlowMatchingTransformer {
             *v = -1e9; // padding beyond valid range
         }
 
+        // Log END_AUDIO logit diagnostics for first few calls (helps debug EOS issues)
+        {
+            let eos_logit = logits_vec[crate::END_AUDIO_TOKEN_ID as usize];
+            let (max_idx, max_val) = logits_vec.iter().enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap_or((0, &0.0));
+            tracing::debug!(
+                "Semantic logits: END_AUDIO[1]={:.4}, argmax[{}]={:.4}, gap={:.4}",
+                eos_logit, max_idx, max_val, max_val - eos_logit,
+            );
+        }
+
         let semantic_logits = Tensor::from_slice_f32(&logits_vec).to_device(device);
         let semantic_code = semantic_logits.argmax(0, false).int64_value(&[]);
 

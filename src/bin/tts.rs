@@ -33,7 +33,7 @@ struct Cli {
     temperature: f32,
 
     /// Maximum generation tokens
-    #[arg(long, default_value = "4096")]
+    #[arg(long, default_value = "16384")]
     max_tokens: usize,
 
     /// Voice reference audio file (for voice cloning instead of preset voices)
