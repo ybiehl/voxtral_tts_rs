@@ -182,6 +182,80 @@ jobs:
           file api_es_male.wav
           ls -lh api_es_male.wav
 
+      - name: "Server: POST /v1/audio/speech (mp3)"
+        run: |
+          curl -sf -X POST http://127.0.0.1:8090/v1/audio/speech \
+            -H "Content-Type: application/json" \
+            -d '{"input":"Hello.","voice":"alloy","response_format":"mp3"}' \
+            -o api_alloy.mp3
+          file api_alloy.mp3
+          ls -lh api_alloy.mp3
+
+      - name: "Server: POST /v1/audio/speech (flac)"
+        run: |
+          curl -sf -X POST http://127.0.0.1:8090/v1/audio/speech \
+            -H "Content-Type: application/json" \
+            -d '{"input":"Hello.","voice":"alloy","response_format":"flac"}' \
+            -o api_alloy.flac
+          file api_alloy.flac
+          ls -lh api_alloy.flac
+
+      - name: "Server: POST /v1/audio/speech (ogg/opus)"
+        run: |
+          curl -sf -X POST http://127.0.0.1:8090/v1/audio/speech \
+            -H "Content-Type: application/json" \
+            -d '{"input":"Hello.","voice":"alloy","response_format":"ogg"}' \
+            -o api_alloy.ogg
+          file api_alloy.ogg
+          ls -lh api_alloy.ogg
+
+      - name: "Server: POST /v1/audio/speech (pcm)"
+        run: |
+          curl -sf -X POST http://127.0.0.1:8090/v1/audio/speech \
+            -H "Content-Type: application/json" \
+            -d '{"input":"Hello.","voice":"alloy","response_format":"pcm"}' \
+            -o api_alloy.pcm
+          test -s api_alloy.pcm
+          ls -lh api_alloy.pcm
+
+      - name: "Server: Validation errors"
+        run: |
+          # Empty input -> 400
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8090/v1/audio/speech \
+            -H "Content-Type: application/json" \
+            -d '{"input":"","voice":"alloy"}')
+          echo "Empty input: $STATUS"
+          [ "$STATUS" = "400" ] || (echo "Expected 400, got $STATUS"; exit 1)
+
+          # Invalid format -> 400
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8090/v1/audio/speech \
+            -H "Content-Type: application/json" \
+            -d '{"input":"Hello.","voice":"alloy","response_format":"aac"}')
+          echo "Invalid format: $STATUS"
+          [ "$STATUS" = "400" ] || (echo "Expected 400, got $STATUS"; exit 1)
+
+          # Speed out of range -> 400
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8090/v1/audio/speech \
+            -H "Content-Type: application/json" \
+            -d '{"input":"Hello.","voice":"alloy","speed":10.0}')
+          echo "Invalid speed: $STATUS"
+          [ "$STATUS" = "400" ] || (echo "Expected 400, got $STATUS"; exit 1)
+
+      - name: "Server: Streaming SSE"
+        if: matrix.backend != 'mlx'
+        run: |
+          curl -sN -X POST http://127.0.0.1:8090/v1/audio/speech \
+            -H "Content-Type: application/json" \
+            -d '{"input":"Hello.","voice":"alloy","stream":true}' \
+            --max-time 300 \
+            -o sse_output.txt || true
+          echo "--- SSE output (first 500 chars) ---"
+          head -c 500 sse_output.txt
+          echo ""
+          grep -q "speech.audio.delta" sse_output.txt || (echo "Missing speech.audio.delta"; exit 1)
+          grep -q "speech.audio.done" sse_output.txt || (echo "Missing speech.audio.done"; exit 1)
+          echo "Streaming test passed"
+
       - name: "Server: Stop"
         if: always()
         run: kill ${{ env.SERVER_PID }} 2>/dev/null || true
@@ -195,7 +269,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: audio-${{ matrix.os }}-${{ matrix.backend }}
-          path: "*.wav"
+          path: |
+            *.wav
+            *.mp3
+            *.flac
+            *.ogg
+            *.pcm
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
