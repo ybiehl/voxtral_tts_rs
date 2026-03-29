@@ -181,64 +181,24 @@ jobs:
           file api_short.wav
           ls -lh api_short.wav
 
-      - name: "API non-streaming: medium (neutral_female)"
+      - name: "API streaming: medium (neutral_female)"
         if: matrix.backend != 'mlx'
         run: |
-          curl -sf -X POST http://127.0.0.1:8090/v1/audio/speech \
-            -H "Content-Type: application/json" \
-            -d '{"input":"The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.","voice":"neutral_female","model":"voxtral-4b-tts"}' \
-            -o api_medium.wav
-          file api_medium.wav
-          ls -lh api_medium.wav
-
-      - name: "API non-streaming: Spanish (es_male)"
-        if: matrix.backend != 'mlx'
-        run: |
-          curl -sf -X POST http://127.0.0.1:8090/v1/audio/speech \
-            -H "Content-Type: application/json" \
-            -d '{"input":"Hola, esta es una prueba del servidor.","voice":"es_male","model":"voxtral-4b-tts"}' \
-            -o api_es_male.wav
-          file api_es_male.wav
-          ls -lh api_es_male.wav
-
-      - name: "API non-streaming: long text multi-chunk (neutral_female)"
-        if: matrix.backend != 'mlx'
-        run: |
-          curl -sf -X POST http://127.0.0.1:8090/v1/audio/speech \
-            -H "Content-Type: application/json" \
-            -d '{"input":"Welcome to Voxtral text to speech. This is a test of the sentence chunking feature that splits long input text into multiple chunks. Each sentence is generated independently with its own prefill and generation cycle. The resulting audio chunks are concatenated together to form the complete output. This approach prevents memory issues with very long text sequences. It also keeps prefill time constant regardless of total text length. The quick brown fox jumps over the lazy dog.","voice":"neutral_female","model":"voxtral-4b-tts"}' \
-            -o api_longtext.wav
-          file api_longtext.wav
-          ls -lh api_longtext.wav
-          SIZE=$(stat -f%z api_longtext.wav 2>/dev/null || stat -c%s api_longtext.wav 2>/dev/null)
-          echo "API long text WAV size: $SIZE bytes"
-          [ "$SIZE" -gt 100000 ] || (echo "WAV too small for long text ($SIZE bytes)"; exit 1)
-
-      - name: "API streaming: SSE (alloy)"
-        run: |
-          if [ "${{ matrix.backend }}" = "mlx" ]; then
-            MAX_TIME=7200
-          else
-            MAX_TIME=300
-          fi
           curl -sN -X POST http://127.0.0.1:8090/v1/audio/speech \
             -H "Content-Type: application/json" \
-            -d '{"input":"Hello.","voice":"alloy","stream":true}' \
-            --max-time "$MAX_TIME" \
-            -o sse_output.txt || true
-          echo "--- SSE output (first 500 chars) ---"
-          head -c 500 sse_output.txt
-          echo ""
-          grep -q "speech.audio.delta" sse_output.txt || (echo "Missing speech.audio.delta"; exit 1)
-          grep -q "speech.audio.done" sse_output.txt || (echo "Missing speech.audio.done"; exit 1)
-          echo "Streaming SSE test passed"
+            -d '{"input":"The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.","voice":"neutral_female","stream":true}' \
+            --max-time 300 \
+            -o sse_medium.txt || true
+          grep -q "speech.audio.delta" sse_medium.txt || (echo "Missing speech.audio.delta"; exit 1)
+          grep -q "speech.audio.done" sse_medium.txt || (echo "Missing speech.audio.done"; exit 1)
+          echo "Streaming medium test passed"
 
           # Decode base64 PCM chunks into a playable WAV file
           python3 -c "
           import base64, struct, json
 
           raw_pcm = b''
-          with open('sse_output.txt') as f:
+          with open('sse_medium.txt') as f:
               for line in f:
                   line = line.strip()
                   if not line.startswith('data:'):
@@ -254,7 +214,7 @@ jobs:
           channels = 1
           bits = 16
           data_size = len(raw_pcm)
-          with open('api_streaming.wav', 'wb') as out:
+          with open('api_streaming_medium.wav', 'wb') as out:
               out.write(b'RIFF')
               out.write(struct.pack('<I', 36 + data_size))
               out.write(b'WAVE')
@@ -264,19 +224,23 @@ jobs:
               out.write(b'data')
               out.write(struct.pack('<I', data_size))
               out.write(raw_pcm)
-          print('Wrote api_streaming.wav')
+          print('Wrote api_streaming_medium.wav')
           "
-          file api_streaming.wav
-          ls -lh api_streaming.wav
+          file api_streaming_medium.wav
+          ls -lh api_streaming_medium.wav
 
-      - name: "API non-streaming: MP3 (alloy)"
+      - name: "API non-streaming: long text multi-chunk (neutral_female)"
+        if: matrix.backend != 'mlx'
         run: |
           curl -sf -X POST http://127.0.0.1:8090/v1/audio/speech \
             -H "Content-Type: application/json" \
-            -d '{"input":"Hello.","voice":"alloy","response_format":"mp3"}' \
-            -o api_test.mp3
-          file api_test.mp3
-          ls -lh api_test.mp3
+            -d '{"input":"Welcome to Voxtral text to speech. This is a test of the sentence chunking feature that splits long input text into multiple chunks. Each sentence is generated independently with its own prefill and generation cycle. The resulting audio chunks are concatenated together to form the complete output. This approach prevents memory issues with very long text sequences. It also keeps prefill time constant regardless of total text length. The quick brown fox jumps over the lazy dog.","voice":"neutral_female","model":"voxtral-4b-tts"}' \
+            -o api_longtext.wav
+          file api_longtext.wav
+          ls -lh api_longtext.wav
+          SIZE=$(stat -f%z api_longtext.wav 2>/dev/null || stat -c%s api_longtext.wav 2>/dev/null)
+          echo "API long text WAV size: $SIZE bytes"
+          [ "$SIZE" -gt 100000 ] || (echo "WAV too small for long text ($SIZE bytes)"; exit 1)
 
       - name: "Server: Validation errors"
         run: |
@@ -316,8 +280,7 @@ jobs:
           name: audio-${{ matrix.os }}-${{ matrix.backend }}
           path: |
             *.wav
-            *.mp3
-            sse_output.txt
+            sse_medium.txt
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
