@@ -63,9 +63,8 @@ impl VoiceStore {
             return Ok(Self { embeddings });
         }
 
-        // On CPU, libtorch cannot do BF16 matmul — cast voice embeddings to F32
-        // (same logic as model weight loading in weights.rs)
-        let need_f32 = matches!(device, Device::Cpu);
+        // Keep BF16 on all backends — libtorch 2.7+ supports BF16 on CPU
+        let need_f32 = false;
 
         for name in PRESET_VOICES {
             let pt_path = voice_dir.join(format!("{}.pt", name));

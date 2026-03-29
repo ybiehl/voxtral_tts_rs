@@ -391,7 +391,9 @@ impl Tensor {
     // -- Activations --
 
     pub fn softmax(&self, dim: i64) -> Self {
-        Tensor::from_tch(self.inner.softmax(dim, tch::Kind::Float))
+        // Compute in F32 for numerical stability, then cast back to input dtype
+        let result = self.inner.softmax(dim, tch::Kind::Float);
+        Tensor::from_tch(result.to_kind(self.inner.kind()))
     }
 
     pub fn relu(&self) -> Self {

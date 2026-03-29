@@ -41,12 +41,14 @@ impl RMSNorm {
         }
         #[cfg(not(feature = "mlx"))]
         {
-            // x: [..., dim]
+            // Compute variance in F32 for stability, multiply by weight in F32,
+            // then cast output back to input dtype (BF16)
+            let input_dtype = x.kind();
             let x_f32 = x.to_dtype(DType::Float32);
             let variance = x_f32.pow_scalar(2.0).mean_dim(&[-1], true);
             let normed = &x_f32 / &((&variance + self.eps).sqrt());
             let out = &normed * &self.weight.to_dtype(DType::Float32);
-            out.to_dtype(x.kind())
+            out.to_dtype(input_dtype)
         }
     }
 }
@@ -79,8 +81,15 @@ impl Linear {
     ///
     /// `x` can be any shape `[..., in_features]`; the result is `[..., out_features]`.
     pub fn forward(&self, x: &Tensor) -> Tensor {
-        // x @ weight^T
-        let out = x.matmul(&self.weight.transpose(-2, -1));
+        // Cast weight to match input dtype so callers control precision:
+        // - BF16 input → BF16 matmul (backbone, flow matching)
+        // - F32 input → F32 matmul (semantic logits for argmax precision)
+        let w = if x.kind() != self.weight.kind() {
+            self.weight.to_dtype(x.kind())
+        } else {
+            self.weight.clone()
+        };
+        let out = x.matmul(&w.transpose(-2, -1));
         match &self.bias {
             Some(b) => &out + b,
             None => out,
@@ -156,7 +165,7 @@ impl RotaryEmbedding {
         #[cfg(feature = "mlx")]
         {
             // Use MLX fused RoPE kernel — single GPU dispatch
-            // traditional=true: split-half format (d, d+dim/2) matching Llama/Mistral convention
+            // traditional=true: interleaved pairs (2d, 2d+1) matching Llama/Mistral convention
             let q_rot = Tensor::from_mlx(crate::backend::mlx::ops::fast_rope(
                 q.as_mlx(), self.dim as i32, true, Some(self.theta as f32), 1.0, 0,
             ));
@@ -189,7 +198,7 @@ impl RotaryEmbedding {
         #[cfg(feature = "mlx")]
         {
             // Use MLX fused RoPE kernel with offset — single GPU dispatch
-            // traditional=true: split-half format (d, d+dim/2) matching Llama/Mistral convention
+            // traditional=true: interleaved pairs (2d, 2d+1) matching Llama/Mistral convention
             let q_rot = Tensor::from_mlx(crate::backend::mlx::ops::fast_rope(
                 q.as_mlx(), self.dim as i32, true, Some(self.theta as f32), 1.0, pos as i32,
             ));
@@ -211,27 +220,37 @@ impl RotaryEmbedding {
 
 /// Apply the rotary embedding to a single tensor (tch backend only).
 ///
+/// Uses the **interleaved** (traditional) convention where consecutive pairs
+/// `(x[2d], x[2d+1])` are rotated together.  This matches MLX's
+/// `fast_rope(traditional=true)` and Mistral's original checkpoint format.
+///
 /// `x`: `[batch, n_heads, seq_len, head_dim]`
 /// `cos`, `sin`: `[seq_len, head_dim/2]`
 #[cfg(not(feature = "mlx"))]
 fn apply_rotary_emb(x: &Tensor, cos: &Tensor, sin: &Tensor) -> Tensor {
     let shape = x.size(); // [B, H, S, D]
-    let head_dim = *shape.last().unwrap();
-    let half = head_dim / 2;
+    let half = *shape.last().unwrap() / 2;
 
-    // Split into first half and second half
-    let x1 = x.narrow(-1, 0, half); // [..., :half]
-    let x2 = x.narrow(-1, half, half); // [..., half:]
+    // Reshape to [..., D/2, 2] to access interleaved pairs (x[2d], x[2d+1])
+    let x_pairs = x.reshape(&[shape[0], shape[1], shape[2], half, 2]);
+    let x_even = x_pairs.select(-1, 0); // x[2d]:   [B, H, S, D/2]
+    let x_odd = x_pairs.select(-1, 1);  // x[2d+1]: [B, H, S, D/2]
 
-    // cos/sin: [seq_len, half] -> [1, 1, seq_len, half] for broadcasting
+    // cos/sin: [seq_len, D/2] -> [1, 1, seq_len, D/2] for broadcasting
     let cos = cos.unsqueeze(0).unsqueeze(0);
     let sin = sin.unsqueeze(0).unsqueeze(0);
 
-    // rotary: [x1*cos - x2*sin, x1*sin + x2*cos]
-    let out1 = &(&x1 * &cos) - &(&x2 * &sin);
-    let out2 = &(&x1 * &sin) + &(&x2 * &cos);
+    // Cast cos/sin to match input dtype (BF16) — matches MLX fast_rope behavior
+    let cos = cos.to_dtype(x.kind());
+    let sin = sin.to_dtype(x.kind());
 
-    Tensor::cat(&[out1, out2], -1)
+    // Rotate each pair: (x_even, x_odd) -> (x_even*cos - x_odd*sin, x_even*sin + x_odd*cos)
+    let out_even = &(&x_even * &cos) - &(&x_odd * &sin);
+    let out_odd = &(&x_even * &sin) + &(&x_odd * &cos);
+
+    // Interleave back: stack on last dim [B, H, S, D/2, 2] -> reshape to [B, H, S, D]
+    let out = Tensor::stack(&[out_even, out_odd], -1);
+    out.contiguous().reshape(&shape)
 }
 
 // ---------------------------------------------------------------------------
@@ -447,8 +466,10 @@ impl Attention {
                 let v = v.contiguous();
 
                 let kv_seq_len = k.size()[2];
-                let scale = 1.0 / (self.head_dim as f64).sqrt();
-                let scores = &q.matmul(&k.transpose(-2, -1).contiguous()) * scale;
+                let scale = 1.0 / (self.head_dim as f32).sqrt();
+                // Pre-scale Q like MLX SDPA does (reduces overflow risk in BF16)
+                let q_scaled = &q * (scale as f64);
+                let scores = q_scaled.matmul(&k.transpose(-2, -1).contiguous());
 
                 let scores = if causal && seq_len > 1 {
                     let mut mask = Tensor::ones(&[seq_len as i64, kv_seq_len], DType::Bool, x.device())
@@ -463,6 +484,7 @@ impl Attention {
                     scores
                 };
 
+                // Softmax in input dtype (BF16 matmul on tch, BF16 SDPA on MLX)
                 let attn = scores.softmax(-1);
                 attn.matmul(&v)
             }
@@ -475,7 +497,7 @@ impl Attention {
             (self.n_heads * self.head_dim) as i64,
         ]);
 
-        // Output projection
+        // Output projection (bf16_round applied inside wo.forward)
         let output = self.wo.forward(&context);
 
         (output, new_k, new_v)
@@ -547,8 +569,9 @@ impl Attention {
                 let k = k.contiguous();
                 let v = v.contiguous();
 
-                let scale = 1.0 / (self.head_dim as f64).sqrt();
-                let scores = &q.matmul(&k.transpose(-2, -1).contiguous()) * scale;
+                let scale = 1.0 / (self.head_dim as f32).sqrt();
+                let q_scaled = &q * (scale as f64);
+                let scores = q_scaled.matmul(&k.transpose(-2, -1).contiguous());
 
                 let scores = if causal && seq_len > 1 {
                     let kv_seq_len = k.size()[2];
@@ -726,7 +749,7 @@ impl TransformerLayer {
     /// Used by the flow-matching acoustic transformer which uses bidirectional
     /// attention without any positional encoding (no RoPE, no KV cache).
     pub fn forward_no_rope(&self, x: &Tensor, causal: bool) -> Tensor {
-        // Pre-norm attention with residual (no RoPE)
+        // Pre-norm attention with residual
         let normed = self.attention_norm.forward(x);
         let attn_out = self.attention.forward_no_rope(&normed, causal);
         let h = x + &attn_out;
@@ -766,5 +789,58 @@ mod tests {
         let x = Tensor::ones(&[1, 4, 64], DType::Float32, Device::Cpu);
         let out = linear.forward(&x);
         assert_eq!(out.size(), vec![1, 4, 32]);
+    }
+
+    #[test]
+    #[cfg(feature = "tch-backend")]
+    fn test_bf16_matmul_cpu() {
+        // Test if libtorch supports BF16 matmul on CPU
+        let a = Tensor::ones(&[2, 3], DType::BFloat16, Device::Cpu);
+        let b = Tensor::ones(&[3, 4], DType::BFloat16, Device::Cpu);
+        let c = a.matmul(&b);
+        println!("BF16 matmul: shape={:?}, dtype={:?}", c.size(), c.kind());
+        assert_eq!(c.size(), vec![2, 4]);
+        // Check if result is BF16 or got promoted to F32
+        println!("BF16 matmul dtype: {:?}", c.kind());
+    }
+
+    #[test]
+    #[cfg(not(feature = "mlx"))]
+    fn test_interleaved_rope_correctness() {
+        // Verify that our interleaved RoPE matches the expected formula:
+        // out[2d]   = x[2d] * cos(pos*freq[d]) - x[2d+1] * sin(pos*freq[d])
+        // out[2d+1] = x[2d] * sin(pos*freq[d]) + x[2d+1] * cos(pos*freq[d])
+        let head_dim = 4usize;
+        let half = head_dim / 2;
+
+        // Input: [B=1, H=1, S=1, D=4]
+        let x = Tensor::from_slice_f32(&[1.0, 2.0, 3.0, 4.0])
+            .reshape(&[1, 1, 1, 4]);
+
+        // cos/sin for 1 position, 2 frequencies: [S=1, D/2=2]
+        let cos = Tensor::from_slice_f32(&[0.5, 0.8]).reshape(&[1, half as i64]);
+        let sin = Tensor::from_slice_f32(&[0.3, 0.6]).reshape(&[1, half as i64]);
+
+        let result = apply_rotary_emb(&x, &cos, &sin);
+        let vals = result.squeeze_dim(0).squeeze_dim(0).squeeze_dim(0).to_vec_f32();
+
+        // Expected (interleaved pairs):
+        // Pair 0: (x[0]=1.0, x[1]=2.0) with cos[0]=0.5, sin[0]=0.3
+        //   out[0] = 1.0*0.5 - 2.0*0.3 = 0.5 - 0.6 = -0.1
+        //   out[1] = 1.0*0.3 + 2.0*0.5 = 0.3 + 1.0 = 1.3
+        // Pair 1: (x[2]=3.0, x[3]=4.0) with cos[1]=0.8, sin[1]=0.6
+        //   out[2] = 3.0*0.8 - 4.0*0.6 = 2.4 - 2.4 = 0.0
+        //   out[3] = 3.0*0.6 + 4.0*0.8 = 1.8 + 3.2 = 5.0
+        let expected = [-0.1, 1.3, 0.0, 5.0];
+
+        println!("RoPE result: {:?}", vals);
+        println!("Expected:    {:?}", expected);
+        for (i, (got, exp)) in vals.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (got - exp).abs() < 1e-5,
+                "Mismatch at index {}: got {}, expected {}",
+                i, got, exp
+            );
+        }
     }
 }

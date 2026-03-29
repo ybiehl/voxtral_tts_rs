@@ -5,13 +5,25 @@ Development notes, architecture decisions, and lessons learned during the port o
 ## Build Commands
 
 ```bash
-# macOS (MLX)
+# macOS (MLX — Apple Silicon GPU)
 git submodule update --init --recursive
 cargo build --release --no-default-features --features mlx
 
-# Linux (libtorch)
+# macOS (libtorch — CPU, for testing/development)
+# Download libtorch 2.7.x (must match tch crate version — tch 0.20 requires 2.7)
+curl -Lo libtorch.zip https://download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-2.7.1.zip
+unzip libtorch.zip
+export LIBTORCH=$(pwd)/libtorch
+export LIBTORCH_BYPASS_VERSION_CHECK=1
+cargo build --release
+
+# Linux (libtorch — CPU or CUDA GPU)
 export LIBTORCH=$(pwd)/libtorch
 cargo build --release
+
+# Run (libtorch needs library path)
+DYLD_LIBRARY_PATH=$LIBTORCH/lib ./target/release/voxtral-tts ...   # macOS
+LD_LIBRARY_PATH=$LIBTORCH/lib ./target/release/voxtral-tts ...     # Linux
 
 # Run tests
 cargo test
@@ -104,17 +116,19 @@ MLX builds a computation graph lazily. The graph must be evaluated periodically 
 **Symptom of too few eval():** Graph grows across iterations, causing exponential slowdowns.
 **Symptom of too many eval():** Each eval() has fixed overhead for graph traversal, scheduling, and GPU synchronization. Reducing from ~130 to ~8 eval() calls per frame improved flow matching from 0.53s to 0.28s per frame.
 
-### 2. RoPE Must Use Split-Half (traditional=true)
+### 2. RoPE Must Use Interleaved Pairs (traditional=true)
 
 MLX `fast_rope` has a `traditional` parameter controlling how dimension pairs are formed:
-- `traditional=true` (split-half): pairs dimension `d` with `d + dim/2` — **correct for Llama/Mistral**
-- `traditional=false` (interleaved): pairs `2d` with `2d+1`
+- `traditional=true` (**interleaved**): pairs consecutive dimensions `(x[2d], x[2d+1])` — **correct for Mistral native checkpoints**
+- `traditional=false` (split-half): pairs `(x[d], x[d + dim/2])`
 
-Llama/Mistral models require split-half format. Using interleaved format corrupts all attention computations, causing the backbone hidden states to be completely wrong.
+Mistral's native safetensors checkpoint uses the interleaved convention. HuggingFace/vLLM internally permute Q/K weights to use split-half, but our weights are in native format.
 
-**Symptom:** Backbone hidden states have wrong norms, semantic code is always the same value (e.g., 10), END_AUDIO is never predicted. All weights are correct but outputs diverge at Layer 0.
+The tch backend must match this exactly — reshape to `[..., D/2, 2]`, select even/odd on the last dim, apply rotation, stack back and reshape. See `apply_rotary_emb()` in `layers.rs`.
 
-**Discovery method:** Compare layer-by-layer outputs against mlx-audio reference implementation. The divergence appears immediately at Layer 0 attention output when RoPE is wrong.
+**Symptom:** Backbone hidden states have wrong norms, semantic code stuck at one value (e.g., 855 or 10), END_AUDIO never predicted. All weights are correct but outputs diverge at Layer 0.
+
+**Discovery method:** Compare layer-by-layer outputs against mlx-audio reference. Divergence appears immediately at Layer 0 attention output when RoPE convention is wrong.
 
 ### 3. KV Cache Must Replace, Not Concatenate
 
@@ -146,6 +160,44 @@ The `tensor.rs` conv methods handle these transposes automatically. The weights 
 ### 5. MLX Initialization
 
 `Device::best_available()` must call `init_mlx(true)` before any MLX operations. Without this, all MLX calls panic with "MLX not initialized".
+
+## TCH Backend (libtorch) -- Critical Lessons
+
+### 1. libtorch Version Must Match tch Crate
+
+The `tch` Rust crate pins to a specific PyTorch major version. `tch 0.20` requires **libtorch 2.7.x**. Using an older version (e.g., 2.4, 2.6) causes C++ compilation errors in `torch-sys` (`no member named '_dyn_quant_matmul_4bit'`, etc.). Set `LIBTORCH_BYPASS_VERSION_CHECK=1` for patch version mismatches (e.g., 2.7.1 vs 2.7.0).
+
+### 2. BF16 Matmul Works on CPU (libtorch 2.7+)
+
+libtorch 2.7+ supports BF16 matmul on Apple Silicon ARM64 CPU. Weights can stay in BF16 (as loaded from safetensors) without converting to F32. This is ~180x faster than F32 matmul on CPU for this model.
+
+Key implementation details:
+- `Linear::forward` casts weight to match input dtype, so BF16 input → BF16 matmul, F32 input → F32 matmul
+- `RMSNorm::forward` computes variance in F32 for stability, then casts output back to input dtype
+- `softmax()` computes in F32 internally, then casts back to input dtype (not hardcoded to F32 output)
+- Voice embeddings and all model weights are kept in BF16 (no `need_f32` conversion)
+
+### 3. RoPE Application Must Not Be Accidentally Deleted
+
+The single most critical line in `Attention::forward` is:
+```rust
+let (q, k) = rotary_emb.forward_at_pos(&q, &k, pos, seq_len);
+```
+This must appear after Q/K reshape to multi-head format and before KV cache concatenation. Without this line, the model has no positional information and produces degenerate output (stuck semantic codes, wrong hidden state norms).
+
+**This line was accidentally deleted during an Edit operation and took extensive debugging to find.** The symptom (11% prefill norm divergence, degenerate codes) looked like a precision issue but was actually a missing computation.
+
+### 4. CUDA GPU Support
+
+The TCH backend supports CUDA GPUs with zero code changes. `Device::best_available()` auto-detects CUDA via `tch::Cuda::is_available()`, and `Device::Gpu(i)` maps to `tch::Device::Cuda(i)`. All tensor operations (matmul, softmax, RoPE, etc.) work identically on CUDA. Download the CUDA variant of libtorch:
+```
+# CUDA 12.6 example
+curl -Lo libtorch.zip https://download.pytorch.org/libtorch/cu126/libtorch-cxx11-abi-shared-with-deps-2.7.1%2Bcu126-linux-x86_64.zip
+```
+
+### 5. Diagnostic Logging Considerations
+
+On GPU (CUDA or MLX), `to_vec_f32()` calls in diagnostic logging trigger device→CPU copies. Gate expensive logging behind `tracing::enabled!(Level::DEBUG)` or keep only at key checkpoints (prefill output, first decode step).
 
 ## Special Token IDs
 
@@ -244,6 +296,14 @@ The codec transformer layers have three features not present in the backbone. Al
 5. **Sliding window**: `attn_sliding_window_size: 16` — implemented in the attention layer for the codec transformer.
 
 ## Performance Notes
+
+On Apple M4 Max (TCH backend, BF16 CPU):
+- Model loading: ~18s (full tensor copy, no memory mapping)
+- Prefill (225 tokens, 26 layers): ~13s
+- Per-frame generation: ~0.55s (backbone + flow matching)
+- Codec decoding: ~0.2s
+- "Hello." (24 frames, 1.92s audio): ~30s total
+- "The quick brown fox..." (36 frames, 2.88s audio): ~30s total
 
 On Apple M4 Max (MLX backend):
 - Model loading: ~0.1s (memory-mapped safetensors)

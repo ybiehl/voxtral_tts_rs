@@ -56,8 +56,9 @@ pub fn load_model_weights(
         model_dir.display()
     );
 
-    // On CPU, libtorch cannot do BF16 matmul — cast all weights to F32.
-    let need_f32 = matches!(device, Device::Cpu);
+    // Keep weights in BF16 on all backends — libtorch 2.7+ supports BF16 matmul
+    // on CPU (Apple Silicon). This matches MLX's native BF16 computation exactly,
+    // avoiding precision divergence that causes degenerate semantic codes.
 
     // Load all tensors into a single HashMap
     let mut all_weights: HashMap<String, Tensor> = HashMap::new();
@@ -65,11 +66,7 @@ pub fn load_model_weights(
         tracing::debug!("Loading {}", path.display());
         let tensors = Tensor::load_safetensors(path)?;
         for (name, tensor) in tensors {
-            let tensor = if need_f32 {
-                tensor.to_dtype(DType::Float32).to_device(device)
-            } else {
-                tensor.to_device(device)
-            };
+            let tensor = tensor.to_device(device);
             all_weights.insert(name, tensor);
         }
     }
