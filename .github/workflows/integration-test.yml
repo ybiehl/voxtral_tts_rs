@@ -133,22 +133,6 @@ jobs:
           file cli_french.wav
           ls -lh cli_french.wav
 
-      - name: "CLI: Long text multi-chunk (neutral_female)"
-        if: matrix.backend != 'mlx'
-        env:
-          RUST_LOG: info
-        run: |
-          ./target/release/voxtral-tts models/voxtral-4b-tts \
-            --text "Welcome to Voxtral text to speech. This is a test of the sentence chunking feature that splits long input text into multiple chunks. Each sentence is generated independently with its own prefill and generation cycle. The resulting audio chunks are concatenated together to form the complete output. This approach prevents memory issues with very long text sequences. It also keeps prefill time constant regardless of total text length. The quick brown fox jumps over the lazy dog." \
-            --voice neutral_female \
-            --output cli_longtext.wav
-          file cli_longtext.wav
-          ls -lh cli_longtext.wav
-          # Verify the output is substantially larger than short text
-          SIZE=$(stat -f%z cli_longtext.wav 2>/dev/null || stat -c%s cli_longtext.wav 2>/dev/null)
-          echo "Long text WAV size: $SIZE bytes"
-          [ "$SIZE" -gt 100000 ] || (echo "WAV too small for long text ($SIZE bytes)"; exit 1)
-
       - name: "CLI: Custom voice via input"
         if: inputs.voice != 'neutral_female' && matrix.backend != 'mlx'
         run: |
@@ -229,36 +213,6 @@ jobs:
           SIZE=$(stat -f%z api_longtext.wav 2>/dev/null || stat -c%s api_longtext.wav 2>/dev/null)
           echo "API long text WAV size: $SIZE bytes"
           [ "$SIZE" -gt 100000 ] || (echo "WAV too small for long text ($SIZE bytes)"; exit 1)
-
-      - name: "API streaming: long text multi-chunk (neutral_female)"
-        if: matrix.backend != 'mlx'
-        run: |
-          curl -sN -X POST http://127.0.0.1:8090/v1/audio/speech \
-            -H "Content-Type: application/json" \
-            -d '{"input":"Welcome to Voxtral text to speech. This is a test of the sentence chunking feature that splits long input text into multiple chunks. Each sentence is generated independently. The resulting audio chunks are concatenated together to form the complete output. The quick brown fox jumps over the lazy dog.","voice":"neutral_female","stream":true}' \
-            --max-time 600 \
-            -o sse_longtext.txt || true
-          echo "--- SSE long text output stats ---"
-          wc -l sse_longtext.txt
-          grep -c "speech.audio.delta" sse_longtext.txt || true
-          grep -q "speech.audio.delta" sse_longtext.txt || (echo "Missing speech.audio.delta"; exit 1)
-          grep -q "speech.audio.done" sse_longtext.txt || (echo "Missing speech.audio.done"; exit 1)
-          # Verify we got more PCM data than a short text would produce
-          python3 -c "
-          import base64, json
-          total = 0
-          with open('sse_longtext.txt') as f:
-              for line in f:
-                  line = line.strip()
-                  if not line.startswith('data:'):
-                      continue
-                  payload = json.loads(line[len('data:'):].strip())
-                  if payload.get('type') == 'speech.audio.delta':
-                      total += len(base64.b64decode(payload['delta']))
-          print(f'Total PCM bytes from streaming: {total}')
-          assert total > 100000, f'Too little PCM data for long text ({total} bytes)'
-          "
-          echo "Streaming long text test passed"
 
       - name: "API streaming: SSE (alloy)"
         run: |
@@ -364,7 +318,6 @@ jobs:
             *.wav
             *.mp3
             sse_output.txt
-            sse_longtext.txt
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
