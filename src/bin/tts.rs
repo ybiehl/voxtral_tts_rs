@@ -108,7 +108,7 @@ fn main() -> anyhow::Result<()> {
         )?
     } else {
         tracing::info!("Using preset voice: {}", cli.voice);
-        tts.generate(&cli.text, &cli.voice, cli.temperature, cli.max_tokens)?
+        tts.generate(&cli.text, &cli.voice, cli.temperature, cli.max_tokens, None)?
     };
 
     // Write output WAV.

@@ -46,11 +46,14 @@ pub fn resolve_voice_alias(name: &str) -> String {
 /// Voice embedding store.
 pub struct VoiceStore {
     embeddings: HashMap<String, Tensor>,
+    device: Device,
 }
 
 impl VoiceStore {
     /// Load all voice embeddings from a model directory.
-    /// Expects `<model_dir>/voice_embedding/<name>.pt` files.
+    ///
+    /// Loads preset voices from `<model_dir>/voice_embedding/<name>.safetensors` (or `.pt`).
+    /// Also scans the directory for any additional `.safetensors` files (custom voices).
     pub fn from_dir(model_dir: &Path, device: Device) -> Result<Self> {
         let voice_dir = model_dir.join("voice_embedding");
         let mut embeddings = HashMap::new();
@@ -60,18 +63,18 @@ impl VoiceStore {
                 "Voice embedding directory not found: {}",
                 voice_dir.display()
             );
-            return Ok(Self { embeddings });
+            return Ok(Self { embeddings, device });
         }
 
         // Keep BF16 on all backends — libtorch 2.7+ supports BF16 on CPU
         let need_f32 = false;
 
+        // Load preset voices by name.
         for name in PRESET_VOICES {
             let pt_path = voice_dir.join(format!("{}.pt", name));
             let safetensors_path = voice_dir.join(format!("{}.safetensors", name));
 
             if safetensors_path.exists() {
-                // Prefer safetensors format (works on both backends)
                 let tensors = Tensor::load_safetensors(&safetensors_path)?;
                 if let Some((_, tensor)) = tensors.into_iter().next() {
                     let tensor = if need_f32 {
@@ -83,7 +86,6 @@ impl VoiceStore {
                     tracing::debug!("Loaded voice embedding: {} (safetensors)", name);
                 }
             } else if pt_path.exists() {
-                // Fall back to .pt format (tch backend only)
                 match Tensor::load_pt(&pt_path) {
                     Ok(tensor) => {
                         let tensor = if need_f32 {
@@ -103,8 +105,96 @@ impl VoiceStore {
             }
         }
 
+        // Scan for any extra .safetensors files (custom / user-created voices).
+        if let Ok(entries) = std::fs::read_dir(&voice_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("safetensors") {
+                    continue;
+                }
+                let stem = match path.file_stem().and_then(|s| s.to_str()) {
+                    Some(s) => s.to_string(),
+                    None => continue,
+                };
+                // Skip already-loaded presets.
+                if embeddings.contains_key(&stem) {
+                    continue;
+                }
+                match Tensor::load_safetensors(&path) {
+                    Ok(tensors) => {
+                        if let Some((_, tensor)) = tensors.into_iter().next() {
+                            let tensor = tensor.to_device(device);
+                            tracing::info!("Loaded custom voice: {}", stem);
+                            embeddings.insert(stem, tensor);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping {}: could not load safetensors: {}",
+                            path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
         tracing::info!("Loaded {} voice embeddings", embeddings.len());
-        Ok(Self { embeddings })
+        Ok(Self { embeddings, device })
+    }
+
+    /// Load a voice embedding from a `.safetensors` file at runtime.
+    ///
+    /// The file must contain a single tensor with key `"embedding"` and
+    /// shape `[N, 3072]`. Overwrites any existing voice with the same name.
+    pub fn load_from_file(&mut self, name: &str, path: &Path) -> Result<()> {
+        let tensors = Tensor::load_safetensors(path)
+            .map_err(|e| VoxtralError::Inference(format!("Failed to load {}: {}", path.display(), e)))?;
+
+        let tensor = tensors
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                VoxtralError::Inference(format!(
+                    "No tensors found in {}",
+                    path.display()
+                ))
+            })?
+            .1
+            .to_device(self.device);
+
+        let shape = tensor.size();
+        if shape.len() != 2 || shape[1] != 3072 {
+            return Err(VoxtralError::Inference(format!(
+                "Expected shape [N, 3072], got {:?} in {}",
+                shape,
+                path.display()
+            )));
+        }
+
+        tracing::info!(
+            "Loaded custom voice '{}' from {} ({} frames)",
+            name,
+            path.display(),
+            shape[0]
+        );
+        self.embeddings.insert(name.to_string(), tensor);
+        Ok(())
+    }
+
+    /// Remove a custom voice by name. Preset voices cannot be removed.
+    ///
+    /// Returns `true` if the voice was found and removed.
+    pub fn remove_voice(&mut self, name: &str) -> bool {
+        if PRESET_VOICES.contains(&name) {
+            tracing::warn!("Refusing to remove preset voice '{}'", name);
+            return false;
+        }
+        let removed = self.embeddings.remove(name).is_some();
+        if removed {
+            tracing::info!("Removed custom voice '{}'", name);
+        }
+        removed
     }
 
     /// Get a voice embedding by name (resolves aliases).
@@ -120,7 +210,7 @@ impl VoiceStore {
         })
     }
 
-    /// List all available voice names.
+    /// List all available voice names (presets + custom).
     pub fn list_voices(&self) -> Vec<&str> {
         self.embeddings.keys().map(|s| s.as_str()).collect()
     }

@@ -18,6 +18,8 @@
 #[cfg(all(feature = "tch-backend", feature = "mlx"))]
 compile_error!("Features 'tch-backend' and 'mlx' are mutually exclusive");
 
+pub mod capi;
+
 #[cfg(not(any(feature = "tch-backend", feature = "mlx")))]
 compile_error!("Either 'tch-backend' or 'mlx' feature must be enabled");
 

@@ -170,7 +170,7 @@ async fn handle_non_streaming(state: AppState, req: SpeechRequest) -> Response {
         let tts = state
             .lock()
             .map_err(|e| VoxtralError::Inference(format!("Failed to acquire model lock: {}", e)))?;
-        tts.generate(&input, &voice, 0.7, 16384)
+        tts.generate(&input, &voice, 0.7, 16384, None)
     })
     .await;
 

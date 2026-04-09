@@ -69,3 +69,8 @@ path = "src/bin/tts_server/main.rs"
 
 [dev-dependencies]
 tempfile = "3.14"
+
+
+[lib]
+name = "voxtral_tts_rs"
+crate-type = ["staticlib", "rlib"]

@@ -86,6 +86,7 @@ impl VoxtralTTS {
         voice_embedding: &Tensor,
         n_voice_frames: usize,
         max_tokens: usize,
+        frames_done: Option<&std::sync::atomic::AtomicUsize>,
     ) -> Result<Vec<Vec<i64>>> {
         let text_tokens: Vec<u32> = self.tokenizer.encode(text);
 
@@ -145,6 +146,10 @@ impl VoxtralTTS {
             let next_embedding = self.backbone.embed_audio_codes(&codes);
             all_codes.push(codes);
 
+            if let Some(counter) = frames_done {
+                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+
             hidden_state = self
                 .backbone
                 .forward_one_embedding(&next_embedding, &mut kv_cache);
@@ -188,6 +193,7 @@ impl VoxtralTTS {
         voice: &str,
         _temperature: f32,
         max_tokens: usize,
+        frames_done: Option<&std::sync::atomic::AtomicUsize>,
     ) -> Result<(Vec<f32>, u32)> {
         if text.is_empty() {
             return Err(VoxtralError::Inference("Input text is empty".to_string()));
@@ -211,7 +217,7 @@ impl VoxtralTTS {
             }
 
             let codes =
-                self.generate_one_chunk(chunk, voice_embedding, n_voice_frames, max_tokens)?;
+                self.generate_one_chunk(chunk, voice_embedding, n_voice_frames, max_tokens, frames_done)?;
             let waveform = self.codec.decode(&codes, self.device)?;
             all_waveform.extend_from_slice(&waveform);
         }
@@ -412,6 +418,19 @@ impl VoxtralTTS {
              Use a preset voice instead."
                 .to_string(),
         ))
+    }
+
+    /// Load a custom voice embedding from a `.safetensors` file at runtime.
+    ///
+    /// The file must contain a tensor with shape `[N, 3072]`.
+    /// The new voice is immediately available for generation.
+    pub fn load_custom_voice(&mut self, name: &str, path: &std::path::Path) -> Result<()> {
+        self.voices.load_from_file(name, path)
+    }
+
+    /// Remove a custom voice by name. Preset voices cannot be removed.
+    pub fn remove_custom_voice(&mut self, name: &str) -> bool {
+        self.voices.remove_voice(name)
     }
 
     /// List available preset voices.
